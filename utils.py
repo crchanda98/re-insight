@@ -121,3 +121,148 @@ def extract_ncm(fname, dest, df_stn):
     df_all = pd.concat([df_all, df_nwp])
     df_all = df_all[all_columns]
     return df_all
+
+
+class APICon:
+    def __init__(self, base_url="http://127.0.0.1:5000", config_path=None):
+        self.base_url = base_url.rstrip("/")
+        
+        # Load config if path provided or from environment variable
+        self.config_path = config_path or os.getenv("WEATHER_CONFIG", "reinsight_config.yml")
+        try:
+            with open(self.config_path, "r") as f:
+                self.config = yaml.safe_load(f)
+        except Exception as e:
+            print(f"Warning: Could not load config file at {self.config_path}: {e}")
+            self.config = {}
+
+    def _post_data(self, endpoint, payload):
+        """Helper to post payload to the API and return the response JSON."""
+        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+        print(f"Pushing {len(payload['data'])} records to {url}...")
+        
+        try:
+            response = requests.post(url, json=payload)
+            print(f"Status Code: {response.status_code}")
+            
+            try:
+                res_json = response.json()
+                return res_json
+            except Exception:
+                return {"error": "Failed to parse JSON response", "context": response.text}
+                
+        except Exception as e:
+            return {"error": str(e)}
+
+    def upload_static_data(self, df):
+        """Uploads static plant data, handling JSON string fields and missing values."""
+        print("\n--- Uploading Static Data ---")
+        try:
+            # Drop rows missing the unique identifier
+            if "plant_name" in df.columns:
+                df = df.dropna(subset=["plant_name"])
+            
+            # Replace NaNs with None for JSON
+            df = df.replace({np.nan: None})
+            
+            # Pre-process malformed JSON like "{turbine: 100}" to "{\"turbine\": 100}"
+            def fix_json_quotes(val):
+                if isinstance(val, str) and (val.startswith("{") or val.startswith("[")):
+                    val = re.sub(r'([{,]\s*)([A-Za-z0-9_]+)(\s*:)', r'\1"\2"\3', val)
+                    val = val.replace("'", '"')
+                return val
+
+            # Parse stringified lists/dicts
+            for col in df.columns:
+                if df[col].dtype == object:
+                    try:
+                        df[col] = df[col].apply(fix_json_quotes)
+                        df[col] = df[col].apply(
+                            lambda x: ast.literal_eval(x) if isinstance(x, str) and (x.startswith("[") or x.startswith("{")) else x
+                        )
+                    except Exception:
+                        pass
+                        
+            # Specific handling for regulation_bands
+            if "regulation_bands" in df.columns:
+                def convert_to_float_list(val):
+                    if val is None: return None
+                    if isinstance(val, (list, tuple)): return [float(v) for v in val]
+                    if isinstance(val, (int, float)): return [float(val)]
+                    if isinstance(val, str):
+                        try:
+                            parsed = json.loads(val.replace("'", '"'))
+                            if isinstance(parsed, list): return [float(v) for v in parsed]
+                            return [float(parsed)]
+                        except Exception:
+                            pass
+                    return val
+                df["regulation_bands"] = df["regulation_bands"].apply(convert_to_float_list)
+
+            payload = {"data": df.to_dict(orient="records")}
+            return self._post_data("/static_table/push", payload)
+            
+        except Exception as e:
+            return {"error": f"An error occurred uploading static data: {e}"}
+
+    def upload_weather_data(self, df):
+        """Uploads weather timeseries data, stripping index columns and NaNs."""
+        print("\n--- Uploading Weather Data ---")
+        try:
+            if "Unnamed: 0" in df.columns:
+                df = df.drop(columns=["Unnamed: 0"])
+
+            df = df.replace({np.nan: None})
+
+            payload = {"data": df.to_dict(orient="records")}
+            return self._post_data("/weather/push", payload)
+
+        except Exception as e:
+            return {"error": f"An error occurred uploading weather data: {e}"}
+
+    def fetch_static_data(self):
+        """Fetches all static data from the API."""
+        url = f"{self.base_url}/static_table/all"
+        print(f"\n--- Fetching Static Data from {url} ---")
+        try:
+            response = requests.get(url)
+            print(f"Status Code: {response.status_code}")
+            if response.status_code == 200:
+                data = response.json()
+                print(f"Successfully fetched {len(data)} static records.")
+                return data
+            else:
+                print("Response Context:", response.text)
+                return None
+        except Exception as e:
+            print(f"Failed to fetch static data: {e}")
+            return None
+
+    def fetch_weather_data(self, plant_name, model_name=None, start_date=None, end_date=None):
+        """Fetches weather data for a specific plant_name, optionally filtered by model_name and date."""
+        url = f"{self.base_url}/weather/pull/{plant_name}"
+        params = []
+        if model_name:
+            params.append(f"model_name={model_name}")
+        if start_date:
+            params.append(f"start_date={start_date}")
+        if end_date:
+            params.append(f"end_date={end_date}")
+            
+        if params:
+            url += "?" + "&".join(params)
+            
+        print(f"\n--- Fetching Weather Data from {url} ---")
+        try:
+            response = requests.get(url)
+            print(f"Status Code: {response.status_code}")
+            if response.status_code == 200:
+                data = response.json()
+                print(f"Successfully fetched {len(data)} weather records.")
+                return data
+            else:
+                print("Response Context:", response.text)
+                return None
+        except Exception as e:
+            print(f"Failed to fetch weather data: {e}")
+            return None
