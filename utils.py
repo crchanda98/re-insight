@@ -266,3 +266,43 @@ class APICon:
         except Exception as e:
             print(f"Failed to fetch weather data: {e}")
             return None
+
+
+
+class SendTeleMsg:
+    def __init__(self):
+        self.api_url = None
+        self.channels = None
+        if isinstance(self.channels, str):
+            self.channels = [self.channels]
+
+    def send_text(self, imsg, image_bytes=None, ich=None):
+        if image_bytes is None:
+            if isinstance(self.channels, list):
+                for ich in self.channels:
+                    base_url = f"{self.api_url}/sendMessage"
+                    params = {
+                        "chat_id": -ich,
+                        "text": imsg,
+                    }
+                    requests.get(base_url, params=params, timeout=5)
+            else:
+                base_url = f"{self.api_url}/sendMessage"
+                params = {
+                    "chat_id": ich,
+                    "text": imsg,
+                }
+                requests.get(base_url, params=params, timeout=5)
+        else:
+            if isinstance(self.channels, list):
+                for ich in self.channels:
+                    base_url = f"{self.api_url}/sendPhoto"
+                    files = {"photo": image_bytes}
+                    data = {"chat_id": -ich, "caption": imsg, "parse_mode": "Markdown"}
+                    requests.post(base_url, files=files, data=data, timeout=10)
+            else:
+                base_url = f"{self.api_url}/sendPhoto"
+                files = {"photo": image_bytes}
+                data = {"chat_id": -ich, "caption": imsg, "parse_mode": "Markdown"}
+                requests.post(base_url, files=files, data=data, timeout=10)
+
