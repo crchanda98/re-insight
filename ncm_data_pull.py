@@ -1,3 +1,4 @@
+import argparse
 import pandas as pd
 import time
 import os
@@ -7,6 +8,7 @@ import utils
 
 start_time = time.time()
 CONFIG_PATH = os.environ.get("WEATHER_CONFIG", "reinsight_config.yml")
+
 with open(CONFIG_PATH, "r") as f:
     config = yaml.safe_load(f)
 username = config["ncm_user"]
@@ -22,6 +24,11 @@ df_static = pd.DataFrame.from_records(data_func.fetch_static_data())
 csv_path = config["ncm_csv_data"]
 ncm_temp_data= config["ncm_temp_data"]
 
+tele_cred = config["telegram_cred"]
+tel_bot = utils.SendTeleMsg()
+tel_bot.api_url = tele_cred["api_url"]
+tel_bot.channels = tele_cred["channels"]
+
 if not os.path.exists(temp_dir):
     os.makedirs(temp_dir)
 
@@ -35,7 +42,11 @@ if os.path.exists(config["ncm_data_log"]):
     if len(manifest) > 0:
         manifest = manifest.split("\n")
 
-lag_days = 10
+parser = argparse.ArgumentParser(description="Pull NCM data")
+parser.add_argument("--lag_days", type=int, default=2, help="Number of lag days to process")
+args = parser.parse_args()
+
+lag_days = args.lag_days
 time_now = dt.now()
 date_end = time_now.date()
 date_start = date_end - timedelta(days=lag_days)
@@ -44,9 +55,7 @@ dates_str = [
 ]
 
 dates_str = [x.strftime("%Y%m%d") for x in dates_str]
-# dates_str.reverse()  # Process latest date first
 cycle = ["00", "06", "12", "18"]
-# cycle.reverse()  # Process latest cycle first
 
 for idate in dates_str:
     print(f"Processing date: {idate}")
@@ -67,6 +76,8 @@ for idate in dates_str:
                     fname=file_path, dest=ncm_temp_data, df_stn=df_static
                 )
                 csv_file_path = os.path.join(csv_path, f"ncm_{date_name}.csv")
+                msg = f"Data for date {date_name} downloaded successfully"
+                tel_bot.send_text(msg)
                 df_ncm.to_csv(csv_file_path, index=False)
                 data_func.upload_weather_data(df_ncm)
                 manifest.append(date_name)
