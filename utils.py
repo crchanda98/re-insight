@@ -222,7 +222,7 @@ class APICon:
 
     def fetch_static_data(self):
         """Fetches all static data from the API."""
-        url = f"{self.base_url}/static_table/all"
+        url = f"{self.base_url}/static_table/pull"
         print(f"\n--- Fetching Static Data from {url} ---")
         try:
             response = requests.get(url)
@@ -244,6 +244,34 @@ class APICon:
         params = []
         if model_name:
             params.append(f"model_name={model_name}")
+        if start_date:
+            params.append(f"start_date={start_date}")
+        if end_date:
+            params.append(f"end_date={end_date}")
+            
+        if params:
+            url += "?" + "&".join(params)
+            
+        print(f"\n--- Fetching Weather Data from {url} ---")
+        try:
+            response = requests.get(url)
+            print(f"Status Code: {response.status_code}")
+            if response.status_code == 200:
+                data = response.json()
+                print(f"Successfully fetched {len(data)} weather records.")
+                return data
+            else:
+                print("Response Context:", response.text)
+                return None
+        except Exception as e:
+            print(f"Failed to fetch weather data: {e}")
+            return None
+
+
+    def fetch_meas_data(self, plant_name, start_date=None, end_date=None):
+        """Fetches weather data for a specific plant_name, optionally filtered by model_name and date."""
+        url = f"{self.base_url}/meas/pull/{plant_name}"
+        params = []
         if start_date:
             params.append(f"start_date={start_date}")
         if end_date:
