@@ -25,10 +25,10 @@ def log_error(endpoint, error_message, traceback_str=None):
     """
     try:
         conn = get_db_connection()
-        timestamp = datetime.now()
+        run_time = datetime.now()
         conn.execute(
-            "INSERT INTO re_forecasting.logging_table (timestamp, endpoint, error_message, traceback) VALUES (?, ?, ?, ?)",
-            [timestamp, endpoint, error_message, traceback_str],
+            "INSERT INTO re_forecasting.logging_table (run_time, endpoint, error_message, traceback) VALUES (?, ?, ?, ?)",
+            [run_time, endpoint, error_message, traceback_str],
         )
         conn.close()
     except Exception as e:
@@ -139,7 +139,7 @@ def pull_weather_data(plant_name):
         log_error(f"/weather/pull/{plant_id}", error_msg, tb_str)
         return jsonify({"error": error_msg}), 500
 
-@app.route("/static_table/all", methods=["GET"])
+@app.route("/static_table/pull", methods=["GET"])
 def get_all_static_table():
     """
     Fetch all data from the static_table in the DuckDB database.
@@ -158,7 +158,7 @@ def get_all_static_table():
     except Exception as e:
         error_msg = str(e)
         tb_str = traceback.format_exc()
-        log_error("/static_table/all", error_msg, tb_str)
+        log_error("/static_table/pull", error_msg, tb_str)
         return jsonify({"error": error_msg}), 500
 
 
@@ -217,5 +217,61 @@ def push_static_data():
         return jsonify({"error": error_msg}), 500
 
 
+
+@app.route("/meas/push", methods=["POST"])
+def push_meas_data():
+    """Upload measurement records to meas_table via the API."""
+    data = request.json.get("data", [])
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    try:
+        conn = get_db_connection()
+        df = pd.DataFrame(data)
+        # Ensure the DataFrame columns match the DB schema; let DuckDB handle column mapping
+        conn.execute("INSERT INTO re_forecasting.meas_table SELECT * FROM df")
+        conn.close()
+        return jsonify({"message": f"Inserted {len(df)} records"}), 201
+    except duckdb.ConstraintException as e:
+        error_msg = str(e)
+        log_error("/meas/push", f"ConstraintException: {error_msg}")
+        return jsonify({"error": "Constraint violation", "details": error_msg}), 409
+    except Exception as e:
+        error_msg = str(e)
+        tb_str = traceback.format_exc()
+        log_error("/meas/push", error_msg, tb_str)
+        return jsonify({"error": error_msg}), 500
+
+
+@app.route("/meas/pull/<string:plant_name>", methods=["GET"])
+def pull_meas_data(plant_name):
+    """
+    Fetch measurement records for a specific plant name.
+    Optional query params: ?start_time=ISO8601&end_time=ISO8601
+    """
+    start_time = request.args.get("start_time")
+    end_time = request.args.get("end_time")
+    try:
+        conn = get_db_connection()
+        query = """
+            SELECT m.* FROM re_forecasting.meas_table m
+            JOIN re_forecasting.static_table s ON m.plant_id = s.id
+            WHERE s.plant_name = ?
+        """
+        params = [plant_name]
+        if start_time:
+            query += " AND m.record_time >= ?"
+            params.append(start_time)
+        if end_time:
+            query += " AND m.record_time <= ?"
+            params.append(end_time)
+        result = conn.execute(query, params).fetchdf().to_dict(orient="records")
+        conn.close()
+        return jsonify(result), 200
+    except Exception as e:
+        error_msg = str(e)
+        tb_str = traceback.format_exc()
+        log_error(f"/meas/pull/{plant_name}", error_msg, tb_str)
+        return jsonify({"error": error_msg}), 500
+
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run()
