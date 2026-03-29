@@ -334,3 +334,7 @@ class SendTeleMsg:
                 data = {"chat_id": -ich, "caption": imsg, "parse_mode": "Markdown"}
                 requests.post(base_url, files=files, data=data, timeout=10)
 
+
+def get_last_15_min_slot(dt_now=dt.now()):
+    minute = (dt_now.minute // 15) * 15
+    return dt_now.replace(minute=minute, second=0, microsecond=0)
