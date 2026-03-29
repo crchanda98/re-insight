@@ -99,6 +99,7 @@ def pull_weather_data(plant_name):
     """
     Pull weather data for a specific plant by its name.
     Optional query param: ?model_name=ECMWF
+    http://127.0.0.1:5000/weather/pull/vayu?model_name=ncm_d2&start_date=2026-03-27T00:00:00&end_date=2026-03-29T15:00:00
     """
     model_name = request.args.get("model_name")
     start_date = request.args.get("start_date")
@@ -121,11 +122,11 @@ def pull_weather_data(plant_name):
             params.append(model_name)
             
         if start_date:
-            query += " AND w.prediction_time >= ?"
+            query += " AND w.forecast_time >= ?"
             params.append(start_date)
             
         if end_date:
-            query += " AND w.prediction_time <= ?"
+            query += " AND w.forecast_time <= ?"
             params.append(end_date)
 
         # Fetch as a list of dictionaries
@@ -247,6 +248,7 @@ def pull_meas_data(plant_name):
     """
     Fetch measurement records for a specific plant name.
     Optional query params: ?start_time=ISO8601&end_time=ISO8601
+    http://127.0.0.1:5000/meas/pull/vayu?start_time=2026-03-01T00:00:00&end_time=2026-04-30T23:59:59
     """
     start_time = request.args.get("start_time")
     end_time = request.args.get("end_time")
