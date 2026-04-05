@@ -6,12 +6,8 @@ from ftplib import FTP
 import requests
 import numpy as np
 import utils
+import argparse
 import traceback
-
-def get_last_15_min_slot(dt_now=dt.now()):
-    minute = (dt_now.minute // 15) * 15
-    return dt_now.replace(minute=minute, second=0, microsecond=0)
-
 
 # --- Configuration ---
 FTP_HOST = "115.113.175.188"
@@ -22,9 +18,14 @@ PLANT_NAME = "Loc_4094"
 # Path based on your screenshot
 LOCAL_DEST = f"../data_lake/re_insights/ftp_data/{PLANT_NAME}"
 
+parser = argparse.ArgumentParser(description="Pull NCM data")
+parser.add_argument("--lag_hours", type=int, default=2, help="Number of lag hours to process")
+args = parser.parse_args()
+
+lag_hours = args.lag_hours
 time_now = dt.now()
-end_time = get_last_15_min_slot()
-start_time = end_time - timedelta(hours=24*1)
+end_time = utils.get_last_15_min_slot()
+start_time = end_time - timedelta(hours=lag_hours)
 REMOTE_DIR = f"/RealTime_SCADA/Loc_4094/"
 
 base_url = "http://127.0.0.1:5000"
