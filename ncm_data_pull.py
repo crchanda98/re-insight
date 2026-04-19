@@ -4,6 +4,8 @@ import time
 import os
 from datetime import datetime as dt, timedelta
 import yaml
+from sqlalchemy import create_engine
+from urllib.parse import quote as urlquote
 import utils
 
 start_time = time.time()
@@ -11,6 +13,18 @@ CONFIG_PATH = os.environ.get("WEATHER_CONFIG", "reinsight_config.yml")
 
 with open(CONFIG_PATH, "r") as f:
     config = yaml.safe_load(f)
+
+db_cred = config["db_cred"]
+
+engine = create_engine(
+    f"postgresql://{db_cred['user_name']}:%s@{db_cred['user_ip']}:{db_cred['user_port']}/{db_cred['db_name']}"
+    % urlquote(db_cred["user_passwd"])
+)
+db_columns = config["db_columns"]
+
+db_con = utils.DBcon(con = engine, db_schema=db_columns)
+df_static = db_con.get_static_data()
+
 username = config["ncm_user"]
 password = config["ncm_password"]
 base_url=config["base_url"]
@@ -19,7 +33,7 @@ data_func = utils.APICon(base_url = base_url)
 url = "https://pdscloud.ncmrwf.gov.in:8443/api/v1/REdownload"
 temp_dir = os.path.join(config["temp_dir"], "ncm_data")
 
-df_static = pd.DataFrame.from_records(data_func.fetch_static_data())
+# df_static = pd.DataFrame.from_records(data_func.fetch_static_data())
 
 csv_path = config["ncm_csv_data"]
 ncm_temp_data= config["ncm_temp_data"]
@@ -75,11 +89,21 @@ for idate in dates_str:
                 df_ncm = utils.extract_ncm(
                     fname=file_path, dest=ncm_temp_data, df_stn=df_static
                 )
+                # df_ncm =extract_ncm(
+                #     fname=file_path, dest=ncm_temp_data, df_stn=df_static
+                # )
                 csv_file_path = os.path.join(csv_path, f"ncm_{date_name}.csv")
                 msg = f"Data for date {date_name} downloaded successfully"
                 tel_bot.send_text(msg)
                 df_ncm.to_csv(csv_file_path, index=False)
-                data_func.upload_weather_data(df_ncm)
+                df_ncm['prediction_time'] = pd.to_datetime(df_ncm['prediction_time'])
+                df_ncm['forecast_time'] = pd.to_datetime(df_ncm['forecast_time'])
+                df_ncm['prediction_time'] = df_ncm['prediction_time'].dt.tz_localize('UTC')
+                df_ncm['forecast_time'] = df_ncm['forecast_time'].dt.tz_localize('UTC')
+                # data_func.upload_weather_data(df_ncm)
+                df_ncm = df_ncm.set_index(db_columns["weather_table"]["unique_constraint"])
+                db_con.push_weather_data(df_ncm)
                 manifest.append(date_name)
                 with open(config["ncm_data_log"], "w") as f:
                     f.write("\n".join(manifest))
+                
