@@ -1,0 +1,61 @@
+import pandas as pd
+import yaml
+import os
+import traceback
+import numpy as np
+import utils
+from datetime import datetime as dt, timedelta
+from sklearn.ensemble import RandomForestRegressor
+from ftplib import FTP
+from sqlalchemy import create_engine
+from urllib.parse import quote as urlquote
+
+CONFIG_PATH = os.getenv("WEATHER_CONFIG", "reinsight_config.yml")
+with open(CONFIG_PATH, "r") as f:
+    config = yaml.safe_load(f)
+
+date_now_ist = utils.get_last_15_min_slot()
+date_now = date_now_ist - timedelta(hours = 5, minutes = 30)
+fct_start_time = date_now + timedelta(hours = 2)
+fct_end_time = fct_start_time.replace(hour = 23, minute = 45)
+
+base_url="http://127.0.0.1:5000"
+farm_name = "vayu"
+
+
+FTP_HOST = config["fct_ftp_cred"]["host"]
+FTP_USER = config["fct_ftp_cred"]["user"]
+FTP_PASS = config["fct_ftp_cred"]["password"]
+
+def push_fct_to_ftp(filename):
+    base_name = os.path.basename(filename)
+    with FTP(FTP_HOST) as ftp:
+        ftp.login(user=FTP_USER, passwd=FTP_PASS)
+        ftp.cwd("/home/ftpuser/ftp/upload")
+        with open(filename, "rb") as file:
+            ftp.storbinary(f"STOR {base_name}", file)
+
+db_cred = config["db_cred"]
+
+engine = create_engine(
+    f"postgresql://{db_cred['user_name']}:%s@{db_cred['user_ip']}:{db_cred['user_port']}/{db_cred['db_name']}"
+    % urlquote(db_cred["user_passwd"])
+)
+db_columns = config["db_columns"]
+
+db_con = utils.DBcon(con = engine, db_schema=db_columns)
+df_static = db_con.get_static_data()
+
+for _, idf in df_static.iterrows():
+    print(f"Running DA for {idf['plant_name']}")
+    farm_name = idf["plant_name"]
+    fct_filename = f"../data_lake/re_insights/fct_dispatch/intraday_wind_{farm_name}_{date_now_ist.strftime('%Y%m%d_%H%M')}.csv"
+    fct_data = db_con.get_fct_data(plant=farm_name, fct_src="inhouse", model_name="intraday_wind", \
+        start_date=fct_start_time.strftime("%Y-%m-%dT%H:%M:%S"), \
+        end_date=fct_end_time.strftime("%Y-%m-%dT%H:%M:%S"))
+    fct_data = fct_data.sort_values(by=["forecast_time", "prediction_time"], ascending=[True, False])
+    fct_data = fct_data.drop_duplicates(subset=["forecast_time"], keep = "first")
+    fct_data["forecast_time"] = fct_data["forecast_time"].dt.tz_convert("Asia/Kolkata")
+    fct_data = fct_data[["plant_name", "forecast_time", "active_power"]]
+    fct_data.to_csv(fct_filename, index = False)
+    push_fct_to_ftp(fct_filename)
