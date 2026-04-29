@@ -64,7 +64,8 @@ for _, idf in df_static.iterrows():
         start_date=train_start_time.strftime("%Y-%m-%dT%H:%M:%S"), \
         end_date=train_end_time.strftime("%Y-%m-%dT%H:%M:%S"))
     df_nwp = nwp_data[nwp_data["height"] == 80]
-    df_nwp = df_nwp.drop_duplicates(subset="forecast_time")
+    df_nwp = df_nwp.sort_values(by=["forecast_time", "prediction_time"], ascending=[True, False])
+    df_nwp = df_nwp.drop_duplicates(subset="forecast_time", keep="first")
     df_nwp['u_ncm_d2'] = df_nwp['wind_speed'] * np.cos(np.radians(270 - df_nwp['wind_direction']))
     df_nwp['v_ncm_d2'] = df_nwp['wind_speed'] * np.sin (np.radians(270 - df_nwp['wind_direction']))
     df_nwp['wind_speed_lag1'] = df_nwp["wind_speed"].shift(1)
@@ -86,7 +87,10 @@ for _, idf in df_static.iterrows():
         end_date=fct_end_time.strftime("%Y-%m-%dT%H:%M:%S"))
 
     # df_nwp_fct = pd.DataFrame.from_records(df_nwp_fct)
-    df_nwp_fct = df_nwp_fct.drop_duplicates(subset="forecast_time")
+    df_nwp_fct = df_nwp_fct[df_nwp_fct["height"] == 80]
+    df_nwp_fct = df_nwp_fct.sort_values(by=["forecast_time", "prediction_time"], ascending=[True, False])
+    df_nwp_fct = df_nwp_fct.drop_duplicates(subset="forecast_time", keep="first")
+
     df_nwp_fct['u_ncm_d2'] = df_nwp_fct['wind_speed'] * np.cos(np.radians(270 - df_nwp_fct['wind_direction']))
     df_nwp_fct['v_ncm_d2'] = df_nwp_fct['wind_speed'] * np.sin (np.radians(270 - df_nwp_fct['wind_direction']))
     df_nwp_fct['wind_speed_lag1'] = df_nwp_fct["wind_speed"].shift(1)
