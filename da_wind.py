@@ -57,7 +57,7 @@ pc = pc.dropna()
 pc = pc.sort_values("wind")
 
 pc_ws = pc["wind"].values
-pc_pw = pc["power"].values / 1000   # kW → MW
+pc_pw = pc["power"].values   # kW → MW
 
 # ----------------------------------------------------------
 # WIND → POWER CONVERTER
@@ -75,6 +75,8 @@ for _, idf in df_static.iterrows():
         start_date=fct_start_time_utc.strftime("%Y-%m-%dT%H:%M:%S"), \
         end_date=fct_end_time_utc.strftime("%Y-%m-%dT%H:%M:%S"))
     df_nwp = nwp_data[nwp_data["height"] == 80]
+    df_nwp = df_nwp.sort_values(by=["forecast_time", "prediction_time"], ascending=[True, False])
+    df_nwp = df_nwp.drop_duplicates(subset="forecast_time", keep="first")
     df_nwp["power"] = ws_to_power(df_nwp["wind_speed"]) * idf['plant_details']["turbine"]
     df_nwp = df_nwp[["forecast_time", "power"]]
     df_nwp["forecast_time"] = df_nwp["forecast_time"].dt.tz_convert("Asia/Kolkata")
