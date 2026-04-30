@@ -11,6 +11,7 @@ import yaml
 from pangres import upsert
 import traceback
 import glob
+from pathlib import Path
 from ftplib import FTP
 
 def push_fct_to_ftp(filename, FTP_HOST, FTP_USER, FTP_PASS):
@@ -131,7 +132,12 @@ def extract_ncm(fname, dest, df_stn):
     df_all = pd.concat([df_all, df_nwp])
     df_all = df_all[all_columns]
     df_all = df_all.dropna(how = "all")
-    os.system(f"rm -rf {dest}/*nc")
+    # os.system(f"rm -rf {dest}/*nc")
+    ds_u.close() # Manually close the handle
+    ds_v.close() # Manually close the handle
+    dest_path = Path(dest)
+    for nc_file in dest_path.glob("*.nc"):
+        nc_file.unlink()
     return df_all
 
 class APICon:
