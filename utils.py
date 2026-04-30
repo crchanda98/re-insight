@@ -8,8 +8,18 @@ import os
 from tqdm import tqdm
 from datetime import datetime as dt, timedelta
 import yaml
+from pangres import upsert
 import traceback
+import glob
+from ftplib import FTP
 
+def push_fct_to_ftp(filename, FTP_HOST, FTP_USER, FTP_PASS):
+    base_name = os.path.basename(filename)
+    with FTP(FTP_HOST) as ftp:
+        ftp.login(user=FTP_USER, passwd=FTP_PASS)
+        ftp.cwd("/home/ftpuser/ftp/upload")
+        with open(filename, "rb") as file:
+            ftp.storbinary(f"STOR {base_name}", file)
 
 def download_ncm_data(inputdate, cycle, data_path):
     filename = ""
@@ -71,7 +81,6 @@ def download_ncm_data(inputdate, cycle, data_path):
         print(e)
         return filename
 
-
 def extract_ncm(fname, dest, df_stn):
     all_columns = [
         "plant_id",
@@ -94,18 +103,17 @@ def extract_ncm(fname, dest, df_stn):
         print(f"An error occurred: {e}")
     except FileNotFoundError:
         print(f"Error: The file {fname} was not found.")
-
-    file = os.path.join(dest, "u_wind_d2.nc")
-    ds_u = xr.open_dataset(file)
-    file = os.path.join(dest, "v_wind_d2.nc")
-    ds_v = xr.open_dataset(file)
+    uwind_file = glob.glob(dest + "/u*2.nc")[0]
+    ds_u = xr.open_dataset(uwind_file)
+    vwind_file = glob.glob(dest + "/v*2.nc")[0]
+    ds_v = xr.open_dataset(vwind_file)
     ds = xr.merge([ds_u, ds_v], join="outer")
 
     df_nwp = []
     for _, idf in df_stn.iterrows():
         lat = idf["latitude"]
         lon = idf["longitude"]
-        plant_id = idf["id"]
+        plant_id = idf["plant_id"]
         df_temp = ds.sel(lat=lat, lon=lon, method="nearest").to_dataframe()
         df_temp = df_temp.reset_index()
         df_temp["plant_id"] = plant_id
@@ -116,12 +124,15 @@ def extract_ncm(fname, dest, df_stn):
         np.degrees(np.arctan2(df_nwp["u"], df_nwp["v"])) + 180
     ) % 360
     df_nwp["model_name"] = "ncm_d2"
+    df_nwp = df_nwp[df_nwp["lev"].isin([50, 80])]
     df_nwp = df_nwp.rename({"time": "forecast_time", "lev": "height"}, axis=1)
+    df_nwp['forecast_time'] = pd.to_datetime(df_nwp['forecast_time'])
     df_nwp["prediction_time"] = df_nwp["forecast_time"].min()
     df_all = pd.concat([df_all, df_nwp])
     df_all = df_all[all_columns]
+    df_all = df_all.dropna(how = "all")
+    os.system(f"rm -rf {dest}/*nc")
     return df_all
-
 
 class APICon:
     def __init__(self, base_url="http://127.0.0.1:5000", config_path=None):
@@ -338,3 +349,78 @@ class SendTeleMsg:
 def get_last_15_min_slot(dt_now=dt.now()):
     minute = (dt_now.minute // 15) * 15
     return dt_now.replace(minute=minute, second=0, microsecond=0)
+
+class DBcon:
+    def __init__(self, con, db_schema, schma_name = "re_insight"):
+        self.db_schema = db_schema
+        self.conn = con
+        self.schma_name = schma_name
+        self.df_static = pd.read_sql("select * from re_insight.static_table", con=self.conn)
+    
+    def get_static_data(self):
+        return self.df_static
+    
+    def push_static_data(self, idf):
+        if "plant_name" in idf.columns:
+            idf = idf.set_index("plant_name")
+        upsert(
+            con=self.conn,
+            df=idf,
+            table_name="static_table",
+            schema=self.schma_name,
+            if_row_exists="update",
+        )
+    
+    def get_weather_data(self, plant, model, start_date, end_date):
+        ist = self.df_static[self.df_static["plant_name"] == plant].iloc[0]
+        df_weather = pd.read_sql(f"select * from re_insight.weather_table \
+            where plant_id = {ist['plant_id']} \
+            and model_name = '{model}' \
+            and forecast_time between '{start_date}' and '{end_date}'", con=self.conn)
+        df_weather["plant_name"] = ist["plant_name"]
+        return df_weather
+    
+    def push_weather_data(self, idf):
+        upsert(
+            con=self.conn,
+            df=idf,
+            table_name="weather_table",
+            schema="re_insight",
+            if_row_exists="update",
+        )
+    
+    def get_meas_data(self, plant, start_date, end_date):
+        ist = self.df_static[self.df_static["plant_name"] == plant].iloc[0]
+        df_weather = pd.read_sql(f"select * from re_insight.meas_table \
+            where plant_id = {ist['plant_id']} \
+            and record_time between '{start_date}' and '{end_date}'", con=self.conn)
+        df_weather["plant_name"] = ist["plant_name"]
+        return df_weather
+
+    def push_meas_data(self, idf):
+        upsert(
+            con=self.conn,
+            df=idf,
+            table_name="meas_table",
+            schema="re_insight",
+            if_row_exists="update",
+        )
+
+    def get_fct_data(self, plant, fct_src, model_name, start_date, end_date):
+        ist = self.df_static[self.df_static["plant_name"] == plant].iloc[0]
+        df_weather = pd.read_sql(f"select * from re_insight.forecast_table \
+            where plant_id = {ist['plant_id']} \
+            and forecast_source = '{fct_src}' \
+            and model_name = '{model_name}' \
+            and forecast_time between '{start_date}' and '{end_date}'", con=self.conn)
+        df_weather["plant_name"] = ist["plant_name"]
+        return df_weather
+
+    def push_fct_data(self, idf):
+        upsert(
+            con=self.conn,
+            df=idf,
+            table_name="forecast_table",
+            schema="re_insight",
+            if_row_exists="update",
+        )
