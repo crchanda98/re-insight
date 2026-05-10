@@ -6,7 +6,7 @@ import xarray as xr
 import tarfile
 import os
 from tqdm import tqdm
-from datetime import datetime as dt, timedelta
+from datetime import datetime as dt, timedelta, timezone
 import yaml
 from pangres import upsert
 import traceback
@@ -430,3 +430,26 @@ class DBcon:
             schema="re_insight",
             if_row_exists="update",
         )
+    
+    def get_log_data(self, script, start_date, end_date):
+        df_log = pd.read_sql(f"select * from re_insight.logging_table where script = '{script}' \
+            and record_time between '{start_date}' and '{end_date}'", con=self.conn)
+        return df_log
+    
+    def push_log_data(self, idf):
+        idf = idf.sort_values(["script", "logging_time", "log_type"])
+        idf = idf.drop_duplicates(subset=['logging_time', 'script', 'log_type'], keep='last')
+        idf = idf.set_index(["script", "logging_time", "log_type"])
+        upsert(
+            con=self.conn,
+            df=idf,
+            table_name="logging_table",
+            schema="re_insight",
+            if_row_exists="update",
+        )
+
+    def logging(self, log_dict):
+        if "logging_time" not in log_dict:
+            log_dict["logging_time"] = dt.now(timezone.utc)
+        df_log = pd.DataFrame([log_dict])
+        self.push_log_data(df_log)
