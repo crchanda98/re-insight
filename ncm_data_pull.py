@@ -10,6 +10,7 @@ import utils
 
 start_time = time.time()
 CONFIG_PATH = os.environ.get("WEATHER_CONFIG", "reinsight_config.yml")
+SCRIPT_NAME = os.path.basename(__file__)
 
 with open(CONFIG_PATH, "r") as f:
     config = yaml.safe_load(f)
@@ -25,6 +26,8 @@ db_columns = config["db_columns"]
 db_con = utils.DBcon(con = engine, db_schema=db_columns)
 df_static = db_con.get_static_data()
 
+db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"NCM data script started"})
+
 username = config["ncm_user"]
 password = config["ncm_password"]
 base_url=config["base_url"]
@@ -32,8 +35,6 @@ data_func = utils.APICon(base_url = base_url)
 
 url = "https://pdscloud.ncmrwf.gov.in:8443/api/v1/REdownload"
 temp_dir = os.path.join(config["temp_dir"], "ncm_data")
-
-# df_static = pd.DataFrame.from_records(data_func.fetch_static_data())
 
 csv_path = config["ncm_csv_data"]
 ncm_temp_data= config["ncm_temp_data"]
@@ -77,21 +78,20 @@ for idate in dates_str:
         date_name = idate + icycle
         if date_name in manifest:
             print(f"Data for date {date_name} already processed. Skipping...")
+            db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Data for {date_name} already processed"})
             continue
         else:
             print(f"Downloading data for date {date_name}")
             filename = utils.download_ncm_data(idate, icycle, temp_dir)
             if filename == "":
                 print(f"Failed to download data for date {date_name}. Skipping...")
+                db_con.logging({"script": SCRIPT_NAME, "log_type": "error", "message": f"Failed to download data for {date_name}"})
                 continue
             else:
                 file_path = os.path.join(temp_dir, filename)
                 df_ncm = utils.extract_ncm(
                     fname=file_path, dest=ncm_temp_data, df_stn=df_static
                 )
-                # df_ncm =extract_ncm(
-                #     fname=file_path, dest=ncm_temp_data, df_stn=df_static
-                # )
                 csv_file_path = os.path.join(csv_path, f"ncm_{date_name}.csv")
                 msg = f"Data for date {date_name} downloaded successfully"
                 tel_bot.send_text(msg)
@@ -100,10 +100,12 @@ for idate in dates_str:
                 df_ncm['forecast_time'] = pd.to_datetime(df_ncm['forecast_time'])
                 df_ncm['prediction_time'] = df_ncm['prediction_time'].dt.tz_localize('UTC')
                 df_ncm['forecast_time'] = df_ncm['forecast_time'].dt.tz_localize('UTC')
-                # data_func.upload_weather_data(df_ncm)
                 df_ncm = df_ncm.set_index(db_columns["weather_table"]["unique_constraint"])
                 db_con.push_weather_data(df_ncm)
+                db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"{len(df_ncm)} records pushed to weather table"})
+                db_con.logging({"script": SCRIPT_NAME, "log_type": "success", "message": f"Data for {date_name} downloaded and pushed successfully"})
                 manifest.append(date_name)
                 with open(config["ncm_data_log"], "w") as f:
                     f.write("\n".join(manifest))
-                
+
+db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"NCM data script completed"})
