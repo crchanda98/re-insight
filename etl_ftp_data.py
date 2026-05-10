@@ -13,6 +13,8 @@ from sqlalchemy import create_engine
 from urllib.parse import quote as urlquote
 import utils
 
+SCRIPT_NAME = os.path.basename(__file__)
+
 parser = argparse.ArgumentParser(description="Pull FTP data")
 parser.add_argument("--lag_hours", type=int, default=2, help="Number of lag hours to process")
 parser.add_argument("--lag_days", type=int, default=0, help="Number of lag days to process")
@@ -35,6 +37,8 @@ engine = create_engine(
 db_columns = config["db_columns"]
 
 db_con = utils.DBcon(con = engine, db_schema=db_columns)
+db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Vayu FTP ETL script started"})
+
 df_static = db_con.get_static_data()
 
 # --- Configuration ---
@@ -71,17 +75,21 @@ def upload_meas_data(filename):
         
     df_all = pd.DataFrame()
     fname = os.path.basename(filename)
-    df_all["record_time"] = [dt.strptime(fname[-17:-4], "%Y%m%d_%H%M")]
+    plant_name  = fname[0:-18]
+    record_time = dt.strptime(fname[-17:-4], "%Y%m%d_%H%M")
+    df_all["record_time"] = [record_time]
+    db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Latest measurement time for {plant_name}: {record_time}"})
     df_all["record_time"] = df_all["record_time"].dt.tz_localize("Asia/Kolkata")
     df_all["wind_speed"] = [idf["avgWind"].mean()]
     df_all["active_power"] = [idf["avgPower"].sum()]
-    df_all["plant_name"] = [fname[0:-18]]
+    df_all["plant_name"] = [plant_name]
     df_all = pd.merge(df_all, df_static[["plant_name", "plant_id"]], on="plant_name")
     df_all = pd.concat([df_db, df_all])
     df_all = df_all.dropna(axis=0, how="all")
     df_all = df_all[columns]
     df_all = df_all.set_index(db_columns["meas_table"]["unique_constraint"])
     db_con.push_meas_data(df_all)
+    db_con.logging({"script": SCRIPT_NAME, "log_type": "success", "message": f"Measurement data pushed for {plant_name}"})
 
 def download_ftp_directory(local_path, start, end):
     time_series = pd.date_range(start, end, freq="15min")
@@ -93,8 +101,10 @@ def download_ftp_directory(local_path, start, end):
         with FTP(FTP_HOST) as ftp:
             ftp.login(user=FTP_USER, passwd=FTP_PASS)
             print(f"Connected to {FTP_HOST}")
+            db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"FTP server connected"})
 
-            for itime in time_series:
+
+            for itime in time_series[0:1]:
                 for PLANT_NAME in ["Loc_4094", "Loc_4110", "Loc_4111"]:
                     try:
                         filename = itime.strftime("%Y%m%d_%H%M.csv")
@@ -133,3 +143,4 @@ def download_ftp_directory(local_path, start, end):
 
 if __name__ == "__main__":
     download_ftp_directory(LOCAL_DEST, start=start_time, end=end_time)
+    db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Vayu FTP ETL script completed"})
