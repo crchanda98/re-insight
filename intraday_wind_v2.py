@@ -40,7 +40,7 @@ df_static = db_con.get_static_data()
 
 date_now_ist = utils.get_last_15_min_slot()
 date_now = date_now_ist - timedelta(hours = 5, minutes = 30)
-fct_start_time = date_now + timedelta(hours = 2)
+fct_start_time = date_now + timedelta(hours = 1, minutes = 30)
 fct_end_time = fct_start_time + timedelta(hours = 6)
 train_end_time = date_now
 train_start_time = train_end_time - timedelta(days = 90)
