@@ -5,12 +5,12 @@ import traceback
 import json
 import re
 import numpy as np
-import utils
 from datetime import datetime as dt, timedelta
 from sklearn.ensemble import RandomForestRegressor
 from urllib.parse import quote as urlquote
 from sqlalchemy import create_engine
 from ftplib import FTP
+import utils
 
 CONFIG_PATH = os.getenv("WEATHER_CONFIG", "reinsight_config.yml")
 with open(CONFIG_PATH, "r") as f:
