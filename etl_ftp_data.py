@@ -102,9 +102,7 @@ def download_ftp_directory(local_path, start, end):
             ftp.login(user=FTP_USER, passwd=FTP_PASS)
             print(f"Connected to {FTP_HOST}")
             db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"FTP server connected"})
-
-
-            for itime in time_series[0:1]:
+            for itime in time_series:
                 for PLANT_NAME in ["Loc_4094", "Loc_4110", "Loc_4111"]:
                     try:
                         filename = itime.strftime("%Y%m%d_%H%M.csv")
