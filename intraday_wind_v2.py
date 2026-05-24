@@ -60,6 +60,8 @@ for _, idf in df_static.iterrows():
         meas_data = db_con.get_meas_data(plant=farm_name, \
             start_date=train_start_time.strftime("%Y-%m-%dT%H:%M:%S"), \
             end_date=train_end_time.strftime("%Y-%m-%dT%H:%M:%S"))
+        latest_ftp_time = meas_data["record_time"].max()
+        db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Meas data for {farm_name} with latest record time {latest_ftp_time}"})
 
         ### Fetching nwp model training data
         nwp_data = db_con.get_weather_data(plant=farm_name, model="ncm_d2", \
