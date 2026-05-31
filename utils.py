@@ -453,3 +453,56 @@ class DBcon:
             log_dict["logging_time"] = dt.now(timezone.utc)
         df_log = pd.DataFrame([log_dict])
         self.push_log_data(df_log)
+
+
+def calculate_ap_dsm_series(actual, scheduled, avc, ppa_rate):
+    """
+    Calculates DSM penalties for Andhra Pradesh wind sites using Pandas.
+    
+    Parameters:
+    actual (pd.Series): Actual injection (MW)
+    scheduled (pd.Series): Scheduled generation (MW)
+    avc (pd.Series or float): Available Capacity (MW)
+    ppa_rate (float): Fixed PPA tariff (e.g., 4.84)
+    """
+    
+    # 1. Calculate Absolute Error as a percentage of AvC
+    # Formula: (|Actual - Scheduled| / AvC) * 100
+    error_pct = (abs(actual - scheduled) / avc) * 100
+    deviation_vol = abs(actual - scheduled)
+    
+    # 2. Define conditions for APERC penalty slabs
+    conditions = [
+        (error_pct <= 15),
+        (error_pct > 15) & (error_pct <= 25),
+        (error_pct > 25) & (error_pct <= 35),
+        (error_pct > 35)
+    ]
+    
+    # 3. Define penalty multipliers (0%, 10%, 20%, 30% of PPA rate)
+    penalty_multipliers = [0, 0.10, 0.20, 0.30]
+    
+    # 4. Apply logic across the entire series
+    applied_penalty_rate = np.select(conditions, penalty_multipliers, default=0.30) * ppa_rate
+    
+    # 5. Calculate final penalty amount in ps
+    total_penalty = deviation_vol * applied_penalty_rate *100
+    total_impact = total_penalty / (actual *1000/4)
+    total_impact = np.nan_to_num(total_impact, nan=0.0, posinf=0.0, neginf=0.0)
+    
+    # Return a consolidated DataFrame
+    return pd.DataFrame({
+        'Actual': actual,
+        'Scheduled': scheduled,
+        'Error_Pct': error_pct,
+        'Penalty_Rate': applied_penalty_rate,
+        'DSM_Penalty': total_penalty,
+        'DSM_impact': total_impact
+    })
+
+
+def get_openmeteo(lat, lon):
+    url = "https://customer-api.open-meteo.com/v1/forecast?latitude=52.52&longitude=13.41&hourly=wind_speed_80m,wind_speed_120m&models=ecmwf_ifs,gfs_global,icon_global,meteofrance_arpege_world,gem_global&forecast_days=1&wind_speed_unit=ms&apikey=rjlUQOn5yR5RbGPH"
+    resp = requests.get(url)
+    out = resp.json()
+    return out
