@@ -41,6 +41,7 @@ db_con = utils.DBcon(con = engine, db_schema=db_columns)
 db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Intraday wind script started"})
 
 df_static = db_con.get_static_data()
+df_static = df_static[df_static["parent_id"] != 0]
 
 date_now_ist = utils.get_last_15_min_slot()
 date_now = date_now_ist - timedelta(hours = 5, minutes = 30)

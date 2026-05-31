@@ -51,6 +51,7 @@ def push_fct_to_ftp(filename):
         db_con.logging({"script": SCRIPT_NAME, "log_type": "error", "message": f"FCT data push failed for {filename}: {e}"})
 
 df_static = db_con.get_static_data()
+df_static = df_static[df_static["parent_id"] != 0]
 
 for _, idf in df_static.iterrows():
     try:
