@@ -38,7 +38,7 @@ fct_table_column_un = db_columns["forecast_table"]["unique_constraint"]
 db_con = utils.DBcon(con = engine, db_schema=db_columns)
 db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Intraday wind script started"})
 df_static = db_con.get_static_data()
-
+df_static = df_static[df_static["parent_id"] != 0]
 
 lag_hours = args.lag_hours
 
