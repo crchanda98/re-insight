@@ -140,8 +140,18 @@ with st.sidebar:
         end_date = st.date_input("End Date", value=datetime.today())
         
     st.markdown("### Forecast Settings")
-    fct_src = st.text_input("Forecast Source", value="inhouse")
-    model_name = st.text_input("Model Name", value="intraday_wind")
+    # fct_src = st.text_input("Forecast Source", value="inhouse")
+    fct_src = st.selectbox(
+        "Forecast Source",
+        ("inhouse"),
+    )
+    
+    model_name = st.selectbox(
+        "Model Name",
+        ("intraday_wind", "om_xgb"),
+    )
+    
+    st.text_input("Model Name", value="intraday_wind")
     fct_lag_hours = st.number_input("Forecast Lag (Hours)", min_value=0, max_value=72, value=2, step=1)
     
     st.markdown("### Penalty Settings")
