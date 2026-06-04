@@ -50,51 +50,92 @@ st.markdown("""
 st.title("⚡ Plant Measurement Dashboard")
 st.markdown("View and analyze historical measurement data across various plants.", unsafe_allow_html=True)
 
-def calculate_ap_dsm_series(actual, scheduled, avc, ppa_rate):
+def calculate_ap_dsm_directional_losses(actual, scheduled, avc, ppa_rate):
     """
-    Calculates DSM penalties for Andhra Pradesh wind sites using Pandas.
+    Calculates APERC DSM Penalties alongside customized directional losses:
+    - Revenue Loss: Attributed strictly to Over-Injection scenarios (Actual > Scheduled)
+    - DSM Loss: Attributed strictly to Under-Injection scenarios (Actual < Scheduled)
     
     Parameters:
     actual (pd.Series): Actual injection (MW)
     scheduled (pd.Series): Scheduled generation (MW)
     avc (pd.Series or float): Available Capacity (MW)
-    ppa_rate (float): Fixed PPA tariff (e.g., 4.84)
+    ppa_rate (float): Fixed PPA tariff (Rs. per Unit/kWh, e.g., 4.84)
     """
     
-    # 1. Calculate Absolute Error as a percentage of AvC
-    # Formula: (|Actual - Scheduled| / AvC) * 100
+    # 1. Base Energy Calculations (Convert Power MW to Energy kWh for 15-min blocks)
+    actual_kwh = (actual / 4) * 1000
+    scheduled_kwh = (scheduled / 4) * 1000
+    deviation_kwh = abs(actual_kwh - scheduled_kwh)
+    
+    # 2. Calculate Absolute Error as a percentage of AvC
     error_pct = (abs(actual - scheduled) / avc) * 100
-    deviation_vol = abs(actual - scheduled)
     
-    # 2. Define conditions for APERC penalty slabs
-    conditions = [
-        (error_pct <= 15),
-        (error_pct > 15) & (error_pct <= 25),
-        (error_pct > 25) & (error_pct <= 35),
-        (error_pct > 35)
-    ]
+    # 3. Progressive Slab Calculation (APERC Wind Regulations)
+    # Breaks down the error percentage into its respective regulatory steps
+    slab1_err = np.minimum(error_pct, 15)
+    slab2_err = np.minimum(np.maximum(error_pct - 15, 0), 10)  # 15% to 25%
+    slab3_err = np.minimum(np.maximum(error_pct - 25, 0), 10)  # 25% to 35%
+    slab4_err = np.maximum(error_pct - 35, 0)                 # Above 35%
     
-    # 3. Define penalty multipliers (0%, 10%, 20%, 30% of PPA rate)
-    penalty_multipliers = [0, 0.10, 0.20, 0.30]
+    # Avoid division by zero for perfect forecasting blocks
+    error_pct_safe = np.where(error_pct == 0, 1, error_pct)
     
-    # 4. Apply logic across the entire series
-    applied_penalty_rate = np.select(conditions, penalty_multipliers, default=0.30) * ppa_rate
+    # APERC Deviation Multipliers (0%, 10%, 20%, 30% of PPA rate)
+    weighted_multiplier = (
+        (slab1_err * 0.00) +
+        (slab2_err * 0.10) +
+        (slab3_err * 0.20) +
+        (slab4_err * 0.30)
+    ) / error_pct_safe
     
-    # 5. Calculate final penalty amount in ps
-    total_penalty = deviation_vol * applied_penalty_rate *100
-    total_impact = total_penalty / (actual *1000/4)
-    total_impact = np.nan_to_num(total_impact, nan=0.0, posinf=0.0, neginf=0.0)
+    # 4. Standard DSM Penalty Calculation (Out of pocket regulatory penalty)
+    applied_penalty_rate = weighted_multiplier * ppa_rate
+    dsm_penalty_rs = deviation_kwh * applied_penalty_rate
     
-    # Return a consolidated DataFrame
+    # 5. Apply Directional Loss Logic
+    # REVENUE LOSS: Loss due to Over-Injection (Actual > Scheduled)
+    # Calculation: The excess un-scheduled energy units evaluated at the PPA rate
+    revenue_loss_rs = np.where(
+        actual_kwh > scheduled_kwh, 
+        (actual_kwh - scheduled_kwh) * ppa_rate, 
+        0.0
+    )
+    
+    # DSM LOSS: Loss due to Under-Injection (Actual < Scheduled)
+    # Calculation: The shortfall units evaluated at the PPA rate
+    dsm_loss_rs = np.where(
+        actual_kwh < scheduled_kwh, 
+        (scheduled_kwh - actual_kwh) * ppa_rate, 
+        0.0
+    )
+    
+    # 6. Total Combined Financial Leakage
+    # Total hit = Statutory DSM Penalties + Over-injection Waste + Under-injection Shortfalls
+    total_financial_loss_rs = dsm_penalty_rs + revenue_loss_rs + dsm_loss_rs
+    
+    # 7. Normalized Impact Assessment Metric (Rs. lost per Scheduled Unit)
+    loss_impact_per_kwh = np.where(scheduled_kwh > 0, total_financial_loss_rs / scheduled_kwh, 0.0)
+    
+    # Clean up array anomalies safely
+    dsm_penalty_rs = np.nan_to_num(dsm_penalty_rs, nan=0.0)
+    revenue_loss_rs = np.nan_to_num(revenue_loss_rs, nan=0.0)
+    dsm_loss_rs = np.nan_to_num(dsm_loss_rs, nan=0.0)
+    total_financial_loss_rs = np.nan_to_num(total_financial_loss_rs, nan=0.0)
+    loss_impact_per_kwh = np.nan_to_num(loss_impact_per_kwh, nan=0.0, posinf=0.0, neginf=0.0)
+    
+    # Return a clean, production-ready DataFrame
     return pd.DataFrame({
-        'Actual': actual,
-        'Scheduled': scheduled,
+        'Actual_kWh': actual_kwh,
+        'Scheduled_kWh': scheduled_kwh,
         'Error_Pct': error_pct,
-        'Penalty_Rate': applied_penalty_rate,
-        'DSM_Penalty': total_penalty,
-        'DSM_impact': total_impact
+        'Deviation_kWh': deviation_kwh,
+        'Regulatory_DSM_Penalty_Rs': dsm_penalty_rs,
+        'Revenue_Loss_OverInjection_Rs': revenue_loss_rs,
+        'DSM_Loss_UnderInjection_Rs': dsm_loss_rs,
+        'Total_Financial_Loss_Rs': total_financial_loss_rs,
+        'Loss_Impact_Rs_per_kWh': loss_impact_per_kwh
     })
-
 @st.cache_resource
 def get_db_connection():
     CONFIG_PATH = os.getenv("WEATHER_CONFIG", "reinsight_config.yml")
@@ -226,7 +267,6 @@ if fetch_btn:
                 combined_df = pd.DataFrame()
                 if (df_meas is not None and not df_meas.empty) and (df_fct is not None and not df_fct.empty):
                     combined_df = df_meas.join(df_fct[["fct_active_power"]], how="outer")
-                    print(combined_df)
                 elif df_meas is not None and not df_meas.empty:
                     combined_df = df_meas
                 elif df_fct is not None and not df_fct.empty:
@@ -237,15 +277,17 @@ if fetch_btn:
                 else:
                     if "meas_active_power" in combined_df.columns and "fct_active_power" in combined_df.columns:
                         valid_mask = combined_df["meas_active_power"].notna() & combined_df["fct_active_power"].notna()
-                        penalty_df = calculate_ap_dsm_series(
-                            actual=combined_df.loc[valid_mask, "meas_active_power"],
-                            scheduled=combined_df.loc[valid_mask, "fct_active_power"],
+                        penalty_df = calculate_ap_dsm_directional_losses(
+                            actual=combined_df.loc[valid_mask, "meas_active_power"] /1000,
+                            scheduled=combined_df.loc[valid_mask, "fct_active_power"] /1000,
                             avc=avc_static,
                             ppa_rate=ppa_rate_input
                         )
-                        combined_df.loc[valid_mask, "DSM_Penalty"] = penalty_df["DSM_Penalty"]
-                        combined_df.loc[valid_mask, "Error_Pct"] = penalty_df["Error_Pct"]
-                        combined_df.loc[valid_mask, "DSM_impact"] = penalty_df["DSM_impact"]
+                        combined_df.loc[valid_mask, "DSM_Loss"] = penalty_df["DSM_Loss_UnderInjection_Rs"]
+                        combined_df.loc[valid_mask, "Revenue_Loss"] = penalty_df["Revenue_Loss_OverInjection_Rs"]
+                        combined_df.loc[valid_mask, "Total_Loss"] = penalty_df["Total_Financial_Loss_Rs"]
+                        # combined_df.loc[valid_mask, "Error_Pct"] = penalty_df["Error_Pct"]
+                        combined_df.loc[valid_mask, "DSM_impact"] = penalty_df["Loss_Impact_Rs_per_kWh"]
 
                     st.markdown("---")
                     
@@ -253,23 +295,25 @@ if fetch_btn:
                     with metrics_col1:
                         st.metric("Total Records", len(combined_df))
                     
-                    if "meas_active_power" in combined_df.columns:
-                        with metrics_col2:
-                            st.metric("Avg Meas Power", f"{combined_df['meas_active_power'].mean():.2f}")
+                    # if "meas_active_power" in combined_df.columns:
+                    with metrics_col2:
+                        st.metric("Plant Capacity", avc_static)
                     if "fct_active_power" in combined_df.columns:
                         with metrics_col3:
                             st.metric("Avg Fct Power", f"{combined_df['fct_active_power'].mean():.2f}")
                     
-                    if "DSM_Penalty" in combined_df.columns:
-                        st.markdown("### 💰 Penalty Summary")
-                        p_col1, p_col2, p_col3 = st.columns(3)
-                        with p_col1:
-                            st.metric("Total DSM Penalty", f"₹ {combined_df['DSM_Penalty'].sum():,.2f}")
-                        with p_col2:
-                            st.metric("Avg Error (%)", f"{combined_df['Error_Pct'].mean():.2f}%")
-                        if "DSM_impact" in combined_df.columns:
-                            with p_col3:
-                                st.metric("Avg DSM Impact (ps)", f"{combined_df['DSM_impact'].mean():.2f}")
+                    # if "DSM_impact" in combined_df.columns:
+                    st.markdown("### 💰 Penalty Summary")
+                    p_col1, p_col2, p_col3, p_col4 = st.columns(4)
+                    with p_col1:
+                        st.metric("Total Loss", f"₹ {combined_df['Total_Loss'].sum():,.2f}")
+                    with p_col2:
+                        st.metric("DSM Loss", f"{combined_df['DSM_Loss'].sum():.2f}")
+                    # if "DSM_impact" in combined_df.columns:
+                    with p_col3:
+                        st.metric("Revenue Loss", f"{combined_df['Revenue_Loss'].mean():.2f}")
+                    with p_col4:
+                        st.metric("Avg DSM Impact (ps)", f"{combined_df['DSM_impact'].mean():.2f}")
                     
                     st.markdown("### 📈 Power Comparison (Meas vs Fct)")
                     
