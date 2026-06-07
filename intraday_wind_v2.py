@@ -43,10 +43,10 @@ db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Intraday
 df_static = db_con.get_static_data()
 df_static = df_static[df_static["parent_id"] != 0]
 
-date_now_ist = utils.get_last_15_min_slot()
-date_now = date_now_ist - timedelta(hours = 5, minutes = 30)
+date_now = utils.get_last_15_min_slot()
 fct_start_time = date_now + timedelta(hours = 1, minutes = 30)
 fct_end_time = fct_start_time + timedelta(hours = 6)
+
 train_end_time = date_now
 train_start_time = train_end_time - timedelta(days = 90)
 
@@ -138,7 +138,7 @@ for _, idf in df_static.iterrows():
         df_nwp_fct = df_nwp_fct.round(2)
 
         df_nwp_fct["forecast_time"] = df_nwp_fct["forecast_time"].dt.tz_convert("Asia/Kolkata")
-        df_nwp_fct["prediction_time"] = date_now_ist
+        df_nwp_fct["prediction_time"] = date_now
         df_nwp_fct["prediction_time"] = df_nwp_fct["prediction_time"].dt.tz_localize("Asia/Kolkata")
         df_nwp_fct["forecast_source"] = "inhouse"
         df_nwp_fct["model_name"] = "intraday_wind"

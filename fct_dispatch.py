@@ -1,11 +1,8 @@
-import pandas as pd
 import yaml
 import os
 import traceback
-import numpy as np
 import utils
-from datetime import datetime as dt, timedelta
-from sklearn.ensemble import RandomForestRegressor
+from datetime import timedelta
 from ftplib import FTP
 from sqlalchemy import create_engine
 from urllib.parse import quote as urlquote
@@ -16,8 +13,7 @@ with open(CONFIG_PATH, "r") as f:
 
 SCRIPT_NAME = os.path.basename(__file__)
 
-date_now_ist = utils.get_last_15_min_slot()
-date_now = date_now_ist - timedelta(hours = 5, minutes = 30)
+date_now = utils.get_last_15_min_slot()
 fct_start_time = date_now + timedelta(hours = 1, minutes = 30)
 fct_end_time = fct_start_time.replace(hour = 23, minute = 45)
 
