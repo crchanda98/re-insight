@@ -143,7 +143,7 @@ for _, idf in df_static.iterrows():
         df_nwp_fct["forecast_source"] = "inhouse"
         df_nwp_fct["model_name"] = "intraday_wind"
         db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"FCT data for {farm_name} with latest prediction time {latest_pred_time}"})
-        df_nwp_fct.to_csv(f"../data_lake/re_insights/rel_time_fct/intraday_wind_{farm_name}_{date_now_ist.strftime('%Y%m%d_%H%M')}.csv", index = False)
+        df_nwp_fct.to_csv(f"../data_lake/re_insights/rel_time_fct/intraday_wind_{farm_name}_{date_now.strftime('%Y%m%d_%H%M')}.csv", index = False)
 
         df_all = pd.DataFrame(columns=fct_table_column)
         df_nwp_fct = pd.concat([df_all, df_nwp_fct], ignore_index=True)
