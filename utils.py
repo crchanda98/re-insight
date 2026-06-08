@@ -454,55 +454,134 @@ class DBcon:
         df_log = pd.DataFrame([log_dict])
         self.push_log_data(df_log)
 
-
-def calculate_ap_dsm_series(actual, scheduled, avc, ppa_rate):
-    """
-    Calculates DSM penalties for Andhra Pradesh wind sites using Pandas.
-    
-    Parameters:
-    actual (pd.Series): Actual injection (MW)
-    scheduled (pd.Series): Scheduled generation (MW)
-    avc (pd.Series or float): Available Capacity (MW)
-    ppa_rate (float): Fixed PPA tariff (e.g., 4.84)
-    """
-    
-    # 1. Calculate Absolute Error as a percentage of AvC
-    # Formula: (|Actual - Scheduled| / AvC) * 100
-    error_pct = (abs(actual - scheduled) / avc) * 100
-    deviation_vol = abs(actual - scheduled)
-    
-    # 2. Define conditions for APERC penalty slabs
-    conditions = [
-        (error_pct <= 15),
-        (error_pct > 15) & (error_pct <= 25),
-        (error_pct > 25) & (error_pct <= 35),
-        (error_pct > 35)
-    ]
-    
-    # 3. Define penalty multipliers (0%, 10%, 20%, 30% of PPA rate)
-    penalty_multipliers = [0, 0.10, 0.20, 0.30]
-    
-    # 4. Apply logic across the entire series
-    applied_penalty_rate = np.select(conditions, penalty_multipliers, default=0.30) * ppa_rate
-    
-    # 5. Calculate final penalty amount in ps
-    total_penalty = deviation_vol * applied_penalty_rate *100
-    total_impact = total_penalty / (actual *1000/4)
-    total_impact = np.nan_to_num(total_impact, nan=0.0, posinf=0.0, neginf=0.0)
-    
-    # Return a consolidated DataFrame
-    return pd.DataFrame({
-        'Actual': actual,
-        'Scheduled': scheduled,
-        'Error_Pct': error_pct,
-        'Penalty_Rate': applied_penalty_rate,
-        'DSM_Penalty': total_penalty,
-        'DSM_impact': total_impact
-    })
-
-
 def get_openmeteo(lat, lon):
     url = "https://customer-api.open-meteo.com/v1/forecast?latitude=52.52&longitude=13.41&hourly=wind_speed_80m,wind_speed_120m&models=ecmwf_ifs,gfs_global,icon_global,meteofrance_arpege_world,gem_global&forecast_days=1&wind_speed_unit=ms&apikey=rjlUQOn5yR5RbGPH"
     resp = requests.get(url)
     out = resp.json()
     return out
+
+
+
+def calculate_ap_dsm_directional_losses(actual, scheduled, avc, ppa_rate):
+    """
+    Calculates APERC DSM Penalties alongside customized directional losses:
+    - Revenue Loss: Attributed strictly to Over-Injection scenarios (Actual > Scheduled)
+    - DSM Loss: Attributed strictly to Under-Injection scenarios (Actual < Scheduled)
+    
+    Parameters:
+    actual (pd.Series): Actual injection (MW)
+    scheduled (pd.Series): Scheduled generation (MW)
+    avc (pd.Series or float): Available Capacity (MW)
+    ppa_rate (float): Fixed PPA tariff (Rs. per Unit/kWh, e.g., 4.84)
+    """
+    
+    # 1. Base Energy Calculations (Convert Power MW to Energy kWh for 15-min blocks)
+    actual_kwh = (actual / 4) * 1000
+    scheduled_kwh = (scheduled / 4) * 1000
+    deviation_kwh = abs(actual_kwh - scheduled_kwh)
+    
+    # 2. Calculate Absolute Error as a percentage of AvC
+    error_pct = (abs(actual - scheduled) / avc) * 100
+    
+    # 3. Progressive Slab Calculation (APERC Wind Regulations)
+    # Breaks down the error percentage into its respective regulatory steps
+    slab1_err = np.minimum(error_pct, 15)
+    slab2_err = np.minimum(np.maximum(error_pct - 15, 0), 10)  # 15% to 25%
+    slab3_err = np.minimum(np.maximum(error_pct - 25, 0), 10)  # 25% to 35%
+    slab4_err = np.maximum(error_pct - 35, 0)                 # Above 35%
+    
+    # Avoid division by zero for perfect forecasting blocks
+    error_pct_safe = np.where(error_pct == 0, 1, error_pct)
+    
+    # APERC Deviation Multipliers (0%, 10%, 20%, 30% of PPA rate)
+    weighted_multiplier = (
+        (slab1_err * 0.00) +
+        (slab2_err * 0.10) +
+        (slab3_err * 0.20) +
+        (slab4_err * 0.30)
+    ) / error_pct_safe
+    
+    # 4. Standard DSM Penalty Calculation (Out of pocket regulatory penalty)
+    applied_penalty_rate = weighted_multiplier * ppa_rate
+    dsm_penalty_rs = deviation_kwh * applied_penalty_rate
+    
+    # 5. Apply Directional Loss Logic
+    # REVENUE LOSS: Loss due to Over-Injection (Actual > Scheduled)
+    # Calculation: The excess un-scheduled energy units evaluated at the PPA rate
+    revenue_loss_rs = np.where(
+        actual_kwh > scheduled_kwh, 
+        (actual_kwh - scheduled_kwh) * ppa_rate, 
+        0.0
+    )
+    
+    # DSM LOSS: Loss due to Under-Injection (Actual < Scheduled)
+    # Calculation: The shortfall units evaluated at the PPA rate
+    dsm_loss_rs = np.where(
+        actual_kwh < scheduled_kwh, 
+        (scheduled_kwh - actual_kwh) * ppa_rate, 
+        0.0
+    )
+    
+    # 6. Total Combined Financial Leakage
+    # Total hit = Statutory DSM Penalties + Over-injection Waste + Under-injection Shortfalls
+    total_financial_loss_rs = dsm_penalty_rs + revenue_loss_rs + dsm_loss_rs
+    
+    # 7. Normalized Impact Assessment Metric (Rs. lost per Scheduled Unit)
+    loss_impact_per_kwh = np.where(scheduled_kwh > 0, total_financial_loss_rs / scheduled_kwh, 0.0)
+    
+    # Clean up array anomalies safely
+    dsm_penalty_rs = np.nan_to_num(dsm_penalty_rs, nan=0.0)
+    revenue_loss_rs = np.nan_to_num(revenue_loss_rs, nan=0.0)
+    dsm_loss_rs = np.nan_to_num(dsm_loss_rs, nan=0.0)
+    total_financial_loss_rs = np.nan_to_num(total_financial_loss_rs, nan=0.0)
+    loss_impact_per_kwh = np.nan_to_num(loss_impact_per_kwh, nan=0.0, posinf=0.0, neginf=0.0)
+    
+    # Return a clean, production-ready DataFrame
+    return pd.DataFrame({
+        'Actual_kWh': actual_kwh,
+        'Scheduled_kWh': scheduled_kwh,
+        'Error_Pct': error_pct,
+        'Deviation_kWh': deviation_kwh,
+        'Regulatory_DSM_Penalty_Rs': dsm_penalty_rs,
+        'Revenue_Loss_OverInjection_Rs': revenue_loss_rs,
+        'DSM_Loss_UnderInjection_Rs': dsm_loss_rs,
+        'Total_Financial_Loss_Rs': total_financial_loss_rs,
+        'Loss_Impact_Rs_per_kWh': loss_impact_per_kwh
+    })
+
+def filter_forecast_by_regulation(dfp, regulation="CTU", lag_hours=2):
+    dfp = dfp.copy()
+    dfp = dfp.sort_values(by=["prediction_time", "forecast_time"])
+    dfp.to_csv("test.csv")
+    if regulation == "CTU":
+        lag_mask = (dfp["forecast_time"] - dfp["prediction_time"]) >= pd.Timedelta(hours=2)
+        dfp = dfp[lag_mask]
+
+    elif regulation == "CTU-RTM":
+        lag_mask = (dfp["forecast_time"] - dfp["prediction_time"]) >= pd.Timedelta(hours=1)
+        dfp = dfp[lag_mask]
+    
+    elif regulation == "MP":
+        pred_minutes_from_midnight = dfp['prediction_time'].dt.hour * 60 + dfp['prediction_time'].dt.minute
+        dfp_filter = dfp[(pred_minutes_from_midnight - 1350) % 90 == 0].copy()
+
+        dfp_filter['block_start'] = dfp_filter['prediction_time'] + pd.Timedelta(minutes=90)
+        dfp_filter['block_end'] = dfp_filter['block_start'] + pd.Timedelta(minutes=75)
+
+        dfp_filter = dfp_filter[
+            (dfp_filter['forecast_time'] >= dfp_filter['block_start']) & 
+            (dfp_filter['forecast_time'] <= dfp_filter['block_end'])
+        ].copy()
+
+        dfp_filter = dfp_filter.drop(columns=['block_start', 'block_end']).sort_values(by='forecast_time')
+        dfp = dfp_filter.reset_index(drop=True)
+
+    else:
+        dfp["prediction_time"] = pd.to_datetime(dfp["prediction_time"], utc=True).dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
+        lag_mask = (dfp["forecast_time"] - dfp["prediction_time"]) == pd.Timedelta(hours=lag_hours)
+        dfp = dfp[lag_mask]
+        
+    dfp = dfp.sort_values(by=["forecast_time", "prediction_time"])
+    dfp = dfp.drop_duplicates(subset=["forecast_time"], keep="last")
+    return dfp
+
