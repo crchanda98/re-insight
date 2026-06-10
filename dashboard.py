@@ -1,5 +1,3 @@
-from logging import warning
-from sqlalchemy.util import warn
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
@@ -7,11 +5,8 @@ import yaml
 import os
 from urllib.parse import quote as urlquote
 from sqlalchemy import create_engine
-import numpy as np
 import utils
 import warnings
-# import solar_dashboard
-# from solar_dashboard import sample_page
 
 warnings.filterwarnings(action="ignore")
 
@@ -81,6 +76,19 @@ def get_static_data_cached():
         st.error(f"Failed to fetch static data: {e}")
         return pd.DataFrame()
 
+def prnalty_kpi(sch, act, avc, ppa = 5):
+    penalty = utils.calculate_ap_dsm_directional_losses(
+        actual=act,
+        scheduled=sch,
+        avc=avc,
+        ppa_rate=ppa
+    )
+    DSM_Loss = penalty["DSM_Loss_UnderInjection_Rs"].sum()
+    Revenue_Loss = penalty["Revenue_Loss_OverInjection_Rs"].sum()
+    Total_Loss = penalty["Total_Financial_Loss_Rs"].sum()
+    DSM_impact = penalty["Loss_Impact_Rs_per_kWh"].mean()
+    return DSM_impact, Revenue_Loss, Total_Loss, DSM_impact
+    
 def measurement_page():
     st.title("⚡ Plant Measurement Dashboard")
     st.markdown("View and analyze historical measurement data across various plants.", unsafe_allow_html=True)
@@ -162,6 +170,7 @@ def measurement_page():
                         end_date=end_dt
                     )
                     df_schedule = df_schedule.rename({"active_power": "schedule"}, axis=1)
+                    df_schedule["schedule"] *= 1000
                     df_schedule["forecast_time"] = pd.to_datetime(df_schedule["forecast_time"], utc=True).dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
                     df_schedule = df_schedule.set_index("forecast_time")
                     df_fct = pd.DataFrame()
@@ -194,6 +203,8 @@ def measurement_page():
                             df_fct = df_fct.sort_values(by=["forecast_time", "prediction_time"])
                             df_fct = df_fct.drop_duplicates(subset=["forecast_time"], keep="last")
                         df_fct = df_fct.set_index("forecast_time")
+                        df_fct = df_fct[["active_power"]]
+                        df_fct = df_fct.resample('15min').interpolate('linear')
                         df_fct = df_fct.sort_index()
                         if "active_power" in df_fct.columns:
                             df_fct = df_fct.rename(columns={"active_power": "fct_active_power"})
@@ -211,18 +222,15 @@ def measurement_page():
                     if combined_df.empty:
                         st.info("No measurements or forecast found for the selected time range.")
                     else:
-                        if "meas_active_power" in combined_df.columns and "fct_active_power" in combined_df.columns:
-                            valid_mask = combined_df["meas_active_power"].notna() & combined_df["fct_active_power"].notna()
-                            penalty_df = utils.calculate_ap_dsm_directional_losses(
-                                actual=combined_df.loc[valid_mask, "meas_active_power"] / 1000,
-                                scheduled=combined_df.loc[valid_mask, "fct_active_power"] / 1000,
-                                avc=avc_static,
-                                ppa_rate=ppa_rate_input
-                            )
-                            combined_df.loc[valid_mask, "DSM_Loss"] = penalty_df["DSM_Loss_UnderInjection_Rs"]
-                            combined_df.loc[valid_mask, "Revenue_Loss"] = penalty_df["Revenue_Loss_OverInjection_Rs"]
-                            combined_df.loc[valid_mask, "Total_Loss"] = penalty_df["Total_Financial_Loss_Rs"]
-                            combined_df.loc[valid_mask, "DSM_impact"] = penalty_df["Loss_Impact_Rs_per_kWh"]
+                        df_score = pd.DataFrame()
+                        for imodel in ["fct_active_power", "schedule"]:
+                            df_nona = combined_df.dropna(subset=["meas_active_power", imodel])
+                            df_nona = df_nona[["meas_active_power", imodel]]
+                            dsm_loss, revenue_loss, total_loss, dsm_impact= prnalty_kpi(df_nona[imodel], df_nona["meas_active_power"], avc_static, ppa_rate_input)
+                            df_score.loc[imodel, "DSM_Loss"] = dsm_loss
+                            df_score.loc[imodel, "Revenue_Loss"] = revenue_loss
+                            df_score.loc[imodel, "Total_Loss"] = total_loss
+                            df_score.loc[imodel, "DSM_impact"] = dsm_impact
 
                         st.markdown("---")
                         
@@ -236,25 +244,16 @@ def measurement_page():
                             with metrics_col3:
                                 st.metric("Avg Fct Power", f"{combined_df['fct_active_power'].mean():.2f}")
                         
-                        st.markdown("### 💰 Penalty Summary")
-                        p_col1, p_col2, p_col3, p_col4 = st.columns(4)
-                        with p_col1:
-                            st.metric("Total Loss", f"₹ {combined_df['Total_Loss'].sum():,.2f}")
-                        with p_col2:
-                            st.metric("DSM Loss", f"{combined_df['DSM_Loss'].sum():.2f}")
-                        with p_col3:
-                            st.metric("Revenue Loss", f"{combined_df['Revenue_Loss'].mean():.2f}")
-                        with p_col4:
-                            st.metric("Avg DSM Impact (ps)", f"{combined_df['DSM_impact'].mean():.2f}")
+                        st.markdown("### 📋 Performance Score")
+                        st.dataframe(df_score, use_container_width=True)
                         
                         st.markdown("### 📈 Power Comparison (Meas vs Fct)")
-                        
                         cols_to_plot = []
                         if "meas_active_power" in combined_df.columns:
                             cols_to_plot.append("meas_active_power")
                         if "fct_active_power" in combined_df.columns:
                             cols_to_plot.append("fct_active_power")
-                            
+                        cols_to_plot.append("schedule")
                         if not cols_to_plot:
                             numeric_cols = combined_df.select_dtypes(include=['number']).columns
                             cols_to_plot = [c for c in numeric_cols if c not in ["plant_id", "id"]]
@@ -262,7 +261,8 @@ def measurement_page():
                         if cols_to_plot:
                             color_mapping = {
                                 "meas_active_power": "#2ecc71", # Green
-                                "fct_active_power": "#e74c3c"   # Red
+                                "fct_active_power": "#e74c3c",   # Red
+                                "schedule": "#f1c40f"  # Yellow
                             }
                             colors = [color_mapping.get(c, "#3498db") for c in cols_to_plot]
                             try:
@@ -285,7 +285,6 @@ def measurement_page():
 
 pages = {
     "Plant Measurement Dashboard": measurement_page,
-    # "Solar Dayahead Forecasting": sample_page
 }
 
 st.sidebar.title("Navigation")
