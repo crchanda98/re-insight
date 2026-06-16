@@ -6,9 +6,16 @@ import os
 from urllib.parse import quote as urlquote
 from sqlalchemy import create_engine
 import utils
+import extra_streamlit_components as stx
 import warnings
 
 warnings.filterwarnings(action="ignore")
+
+CONFIG_PATH = os.getenv("WEATHER_CONFIG", "reinsight_config.yml")
+with open(CONFIG_PATH, "r") as f:
+    CONFIG = yaml.safe_load(f)
+REQUIRE_LOGIN = CONFIG["dashboard"]["login"]
+CREDENTIALS = CONFIG["dashboard"]["credentials"]
 
 # Page config for better appearance
 st.set_page_config(
@@ -18,6 +25,58 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Authentication
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+
+
+def get_cookie_manager():
+    return stx.CookieManager()
+
+cookie_manager = get_cookie_manager()
+if REQUIRE_LOGIN:
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+    cookie_val = cookie_manager.get(cookie="authenticated")
+    if cookie_val == "True":
+        st.session_state.authenticated = True
+    if not st.session_state.authenticated:
+        st.title("⚡ Plant Measurement Dashboard - Login")
+        with st.form("login_form"):
+            st.subheader("Please login to continue")
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submit_button = st.form_submit_button("Login")
+            if submit_button:
+                if username in CREDENTIALS and CREDENTIALS[username] == password:
+                    cookie_manager.set("authenticated", "True", key="set_auth_cookie")
+                    st.session_state.authenticated = True
+                    st.rerun()
+                else:
+                    st.error("Invalid username or password")
+        st.stop()
+
+# Your existing logout function
+def logout():
+    try:
+        # Clear cookies safely
+        if "authenticated" in cookie_manager.get_all():
+            cookie_manager.delete("authenticated", key="del_auth_cookie")
+    except Exception:
+        pass
+    
+    # Reset auth states
+    st.session_state.authenticated = False
+    
+    # TRICK: Instead of st.session_state.clear(), manually clear keys 
+    # or let st.rerun() reset the app state cleanly.
+    for key in list(st.session_state.keys()):
+        if key != "del_auth_cookie":  # Keep the cookie widget key safe during the rerun
+            del st.session_state[key]
+            
+    st.rerun()
+
+# # --- SIDEBAR NAVIGATION & LOGOUT ---
 # Custom CSS for a more premium look
 st.markdown("""
 <style>
@@ -51,32 +110,28 @@ st.markdown("""
 
 @st.cache_resource
 def get_db_connection():
-    CONFIG_PATH = os.getenv("WEATHER_CONFIG", "reinsight_config.yml")
-    with open(CONFIG_PATH, "r") as f:
-        config = yaml.safe_load(f)
-
-    db_cred = config["db_cred"]
-
+    db_cred = CONFIG["db_cred"]
     engine = create_engine(
         f"postgresql://{db_cred['user_name']}:%s@{db_cred['user_ip']}:{db_cred['user_port']}/{db_cred['db_name']}"
         % urlquote(db_cred["user_passwd"])
     )
-    db_columns = config["db_columns"]
+    db_columns = CONFIG["db_columns"]
 
     db_con = utils.DBcon(con=engine, db_schema=db_columns)
     return db_con
 
+db_con = get_db_connection()
 
 @st.cache_data(ttl=60)
 def get_static_data_cached():
+    global db_con
     try:
-        db_con = get_db_connection()
         return db_con.get_static_data()
     except Exception as e:
         st.error(f"Failed to fetch static data: {e}")
         return pd.DataFrame()
 
-def prnalty_kpi(sch, act, avc, ppa = 5):
+def penalty_kpi(sch, act, avc, ppa = 5):
     penalty = utils.calculate_ap_dsm_directional_losses(
         actual=act,
         scheduled=sch,
@@ -88,8 +143,9 @@ def prnalty_kpi(sch, act, avc, ppa = 5):
     Total_Loss = penalty["Total_Financial_Loss_Rs"].sum()
     DSM_impact = penalty["Loss_Impact_Rs_per_kWh"].mean()
     return DSM_impact, Revenue_Loss, Total_Loss, DSM_impact
-    
+
 def measurement_page():
+    global db_con
     st.title("⚡ Plant Measurement Dashboard")
     st.markdown("View and analyze historical measurement data across various plants.", unsafe_allow_html=True)
 
@@ -160,7 +216,6 @@ def measurement_page():
             
             with st.spinner(f"Fetching data for {selected_plant}..."):
                 try:
-                    db_con = get_db_connection()
                     df_meas = db_con.get_meas_data(plant=selected_plant, start_date=start_dt, end_date=end_dt)
                     df_schedule = db_con.get_fct_data(
                         plant=selected_plant, 
@@ -226,7 +281,7 @@ def measurement_page():
                         for imodel in ["fct_active_power", "schedule"]:
                             df_nona = combined_df.dropna(subset=["meas_active_power", imodel])
                             df_nona = df_nona[["meas_active_power", imodel]]
-                            dsm_loss, revenue_loss, total_loss, dsm_impact= prnalty_kpi(df_nona[imodel], df_nona["meas_active_power"], avc_static, ppa_rate_input)
+                            dsm_loss, revenue_loss, total_loss, dsm_impact= penalty_kpi(df_nona[imodel], df_nona["meas_active_power"], avc_static, ppa_rate_input)
                             df_score.loc[imodel, "DSM_Loss"] = dsm_loss
                             df_score.loc[imodel, "Revenue_Loss"] = revenue_loss
                             df_score.loc[imodel, "Total_Loss"] = total_loss
@@ -282,12 +337,74 @@ def measurement_page():
         # Initial state
         st.info("👆 Please select a plant and date range from the configuration panel above, then click 'Fetch Data'.")
 
+def logging_page():
+    global db_con
+    r1_col1, r1_col2, r1_col3 = st.columns(3)
+    r2_col1, r2_col2 = st.columns(2)
+    with r1_col1:
+        selected_script = st.selectbox("Select Script", options=[
+            "aggregator.py", 
+            "da_wind.py", 
+            "fct_dispatch.py", 
+            "intraday_wind_om_rf.py", 
+            "intraday_wind_v2.py", 
+            "ncm_data_pull.py", 
+            "pull_schedule.py"])
+    with r1_col2:
+        start_date = st.date_input("Start Date", value=datetime.today() - timedelta(days=2))
+    with r1_col3:
+        end_date = st.date_input("End Date", value=datetime.today())
+    with r2_col1:
+        log_type = st.radio("Log Type", options=["all", "info", "error", "success"], horizontal=True)
+    df_log = db_con.get_log_data(script = selected_script, start_date = start_date, end_date = end_date)
+    df_log = df_log.sort_values(by="created_at", ascending=False)
+    if log_type is not "all":
+        df_log = df_log[df_log["log_type"] == log_type]
+    st.dataframe(df_log, use_container_width=True)
 
 pages = {
     "Plant Measurement Dashboard": measurement_page,
+    "Log Dashboard": logging_page,
 }
 
+# --- 2. Sidebar Navigation (Top of Sidebar) ---
 st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to", pages.keys())
 
+# Filter your pages dict based on user role here first if needed!
+# (e.g., allowed_pages = {k: v for k, v in pages.items() if k in user_allowed_list})
+
+page = st.sidebar.radio("Go to", list(pages.keys()))
+
+# --- 3. Push Logout Button to the Absolute Bottom ---
+# --- 4. Render the Active Page (Main Body) ---
 pages[page]()
+
+# --- Push Logout Button to the Absolute Bottom ---
+if REQUIRE_LOGIN:
+    st.sidebar.markdown(
+        """
+        <style>
+            [data-testid="stSidebarUserContent"] {
+                display: flex;
+                flex-direction: column;
+                height: 100vh;
+            }
+            .logout-container {
+                margin-top: auto;
+                padding-bottom: 20px;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+    
+    with st.sidebar.container():
+        st.markdown('<div class="logout-container"></div>', unsafe_allow_html=True)
+        
+        # ADD A UNIQUE KEY HERE 👇
+        st.button(
+            "🔓 Logout", 
+            on_click=logout, 
+            use_container_width=True, 
+            key="sidebar_logout_button_unique" 
+        )
