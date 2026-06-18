@@ -55,6 +55,7 @@ for _, idf in df_static.iterrows():
         print(f"Running ID for {idf['plant_name']}")
         db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Running ID for {idf['plant_name']}"})
         farm_name = idf["plant_name"]
+        avc = idf["avc"] *1000
         df_static_plant = df_static[df_static["plant_name"] == farm_name].iloc[0]
 
         ### Fetching training data
@@ -136,7 +137,7 @@ for _, idf in df_static.iterrows():
         df_nwp_fct = df_nwp_fct.rename({"record_time": "forecast_time", 
         "predicted_power": "active_power"}, axis = 1)
         df_nwp_fct = df_nwp_fct.round(2)
-
+        df_nwp_fct["active_power"] = df_nwp_fct["active_power"].clip(lower = avc * 0.15, upper = avc * 0.85)
         df_nwp_fct["forecast_time"] = df_nwp_fct["forecast_time"].dt.tz_convert("Asia/Kolkata")
         df_nwp_fct["prediction_time"] = date_now
         df_nwp_fct["prediction_time"] = df_nwp_fct["prediction_time"].dt.tz_localize("Asia/Kolkata")
