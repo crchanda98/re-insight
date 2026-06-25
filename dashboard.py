@@ -8,6 +8,7 @@ from sqlalchemy import create_engine
 import utils
 import extra_streamlit_components as stx
 import warnings
+import numpy as np
 
 warnings.filterwarnings(action="ignore")
 
@@ -41,7 +42,7 @@ if REQUIRE_LOGIN:
     if cookie_val == "True":
         st.session_state.authenticated = True
     if not st.session_state.authenticated:
-        st.title("⚡ Plant Measurement Dashboard - Login")
+        st.title("⚡ Renew Analytics")
         with st.form("login_form"):
             st.subheader("Please login to continue")
             username = st.text_input("Username")
@@ -131,22 +132,28 @@ def get_static_data_cached():
         st.error(f"Failed to fetch static data: {e}")
         return pd.DataFrame()
 
+import numpy as np
 def penalty_kpi(sch, act, avc, ppa = 5):
-    penalty = utils.calculate_ap_dsm_directional_losses(
+    penalty = utils.calculate_mp_dsm_directional_losses(
         actual=act,
-        scheduled=sch,
-        avc=avc,
+        forecast=sch,
+        avc_kw=avc *1000,
         ppa_rate=ppa
     )
-    DSM_Loss = penalty["DSM_Loss_UnderInjection_Rs"].sum()
-    Revenue_Loss = penalty["Revenue_Loss_OverInjection_Rs"].sum()
-    Total_Loss = penalty["Total_Financial_Loss_Rs"].sum()
-    DSM_impact = penalty["Loss_Impact_Rs_per_kWh"].mean()
-    return DSM_impact, Revenue_Loss, Total_Loss, DSM_impact
+    DSM_Loss = penalty["Over_Injection_DSM_Penalty_Rs"]
+    Revenue_Loss = penalty["Under_Injection_DSM_Penalty_Rs"]
+    Total_Loss = penalty["Total_Statutory_DSM_Penalty_Rs"]
+    DSM_impact = penalty["DSM_Impact_Rs_per_Actual_kWh"]
+    Loss_percentage = penalty["Total_loss_percentage"]#.mean().round(2)
+    return DSM_Loss, Revenue_Loss, Total_Loss, DSM_impact, Loss_percentage
+
+@st.cache_data
+def convert_for_download(df):
+    return df.to_csv().encode("utf-8")
 
 def measurement_page():
     global db_con
-    st.title("⚡ Plant Measurement Dashboard")
+    st.title("⚡ DSM Dashboard")
     st.markdown("View and analyze historical measurement data across various plants.", unsafe_allow_html=True)
 
     df_static = get_static_data_cached()
@@ -217,6 +224,9 @@ def measurement_page():
             with st.spinner(f"Fetching data for {selected_plant}..."):
                 try:
                     df_meas = db_con.get_meas_data(plant=selected_plant, start_date=start_dt, end_date=end_dt)
+                    total_power_generated = df_meas["active_power"].sum() / 4 / 1000
+                    total_revenue = total_power_generated * 1000 * ppa_rate_input / 100000
+                    
                     df_schedule = db_con.get_fct_data(
                         plant=selected_plant, 
                         fct_src="qca", 
@@ -224,6 +234,7 @@ def measurement_page():
                         start_date=start_dt, 
                         end_date=end_dt
                     )
+                    
                     df_schedule = df_schedule.rename({"active_power": "schedule"}, axis=1)
                     df_schedule["schedule"] *= 1000
                     df_schedule["forecast_time"] = pd.to_datetime(df_schedule["forecast_time"], utc=True).dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
@@ -281,23 +292,28 @@ def measurement_page():
                         for imodel in ["fct_active_power", "schedule"]:
                             df_nona = combined_df.dropna(subset=["meas_active_power", imodel])
                             df_nona = df_nona[["meas_active_power", imodel]]
-                            dsm_loss, revenue_loss, total_loss, dsm_impact= penalty_kpi(df_nona[imodel], df_nona["meas_active_power"], avc_static, ppa_rate_input)
-                            df_score.loc[imodel, "DSM_Loss"] = dsm_loss
-                            df_score.loc[imodel, "Revenue_Loss"] = revenue_loss
-                            df_score.loc[imodel, "Total_Loss"] = total_loss
-                            df_score.loc[imodel, "DSM_impact"] = dsm_impact
-
+                            dsm_loss, revenue_loss, total_loss, dsm_impact, loss_percentage = penalty_kpi(df_nona[imodel], df_nona["meas_active_power"], avc_static, ppa_rate_input)
+                            df_score.loc[imodel, "DSM Impact (ps/kWh)"] = dsm_impact *100
+                            df_score.loc[imodel, "DSM Loss (Lacs)"] = dsm_loss /1e5
+                            df_score.loc[imodel, "Revenue Loss (Lacs)"] = revenue_loss /1e5
+                            df_score.loc[imodel, "Total Loss (Lacs)"] = total_loss /1e5
+                            df_score.loc[imodel, "Impact (%)"] = loss_percentage
+                            df_score = df_score.round(2)
+                            
                         st.markdown("---")
                         
-                        metrics_col1, metrics_col2, metrics_col3 = st.columns(3)
+                        metrics_col1, metrics_col2, metrics_col3, metrics_col4 = st.columns(4)
                         with metrics_col1:
                             st.metric("Total Records", len(combined_df))
                         
                         with metrics_col2:
-                            st.metric("Plant Capacity", avc_static)
+                            st.metric("Plant Capacity (MW)", avc_static)
                         if "fct_active_power" in combined_df.columns:
                             with metrics_col3:
-                                st.metric("Avg Fct Power", f"{combined_df['fct_active_power'].mean():.2f}")
+                                st.metric("Power Generated (MWh)", f"{total_power_generated:.2f}")
+                        
+                        with metrics_col4:
+                            st.metric("Total Revenue (Lacs)", f"{total_revenue:.2f}")
                         
                         st.markdown("### 📋 Performance Score")
                         st.dataframe(df_score, use_container_width=True)
@@ -331,6 +347,13 @@ def measurement_page():
                         st.markdown("### 📋 Combined Raw Data")
                         st.dataframe(combined_df[cols_to_plot] if cols_to_plot else combined_df, use_container_width=True)
                         
+                        st.download_button(
+                            label="📥 Download Raw Data (CSV)",
+                            data=convert_for_download(combined_df[cols_to_plot] if cols_to_plot else combined_df),
+                            file_name=f"{selected_plant}_raw_data_{start_date}_{end_date}.csv",
+                            mime="text/csv",
+                        )
+                        
                 except Exception as e:
                     st.error(f"Database Query Error: {e}")
     elif not selected_plant:
@@ -363,7 +386,7 @@ def logging_page():
     st.dataframe(df_log, use_container_width=True)
 
 pages = {
-    "Plant Measurement Dashboard": measurement_page,
+    "DSM Dashboard": measurement_page,
     "Log Dashboard": logging_page,
 }
 

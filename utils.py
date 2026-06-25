@@ -433,7 +433,7 @@ class DBcon:
     
     def get_log_data(self, script, start_date, end_date):
         df_log = pd.read_sql(f"select * from re_insight.logging_table where script = '{script}' \
-            and record_time between '{start_date}' and '{end_date}'", con=self.conn)
+            and created_at between '{start_date} 00:00:00' and '{end_date} 23:59:59' order by created_at", con=self.conn)
         return df_log
     
     def push_log_data(self, idf):
@@ -462,92 +462,90 @@ def get_openmeteo(lat, lon):
 
 
 
-def calculate_ap_dsm_directional_losses(actual, scheduled, avc, ppa_rate):
+
+def calculate_mp_dsm_directional_losses(actual, forecast, avc_kw, ppa_rate=5.0):
     """
-    Calculates APERC DSM Penalties alongside customized directional losses:
-    - Revenue Loss: Attributed strictly to Over-Injection scenarios (Actual > Scheduled)
-    - DSM Loss: Attributed strictly to Under-Injection scenarios (Actual < Scheduled)
-    
-    Parameters:
-    actual (pd.Series): Actual injection (MW)
-    scheduled (pd.Series): Scheduled generation (MW)
-    avc (pd.Series or float): Available Capacity (MW)
-    ppa_rate (float): Fixed PPA tariff (Rs. per Unit/kWh, e.g., 4.84)
+    Calculates summary strict-DSM metrics for Andhra Pradesh (APERC) Regulations.
     """
+    # Force numpy arrays for vectorized stability across Series/Arrays
+    actual = np.array(actual)
+    forecast = np.array(forecast)
     
-    # 1. Base Energy Calculations (Convert Power MW to Energy kWh for 15-min blocks)
-    actual_kwh = (actual / 4) * 1000
-    scheduled_kwh = (scheduled / 4) * 1000
-    deviation_kwh = abs(actual_kwh - scheduled_kwh)
+    # 1. Energy Calculation (Power kW -> Energy kWh for 15-min block)
+    actual_kwh = actual / 4
+    forecast_kwh = forecast / 4
+    avc_kwh = avc_kw / 4
     
-    # 2. Calculate Absolute Error as a percentage of AvC
-    error_pct = (abs(actual - scheduled) / avc) * 100
+    gross_revenue = actual_kwh * ppa_rate
     
-    # 3. Progressive Slab Calculation (APERC Wind Regulations)
-    # Breaks down the error percentage into its respective regulatory steps
+    # 2. Forecast Error % (Normalized against AvC)
+    error_pct = np.where(avc_kw > 0, (np.abs(actual - forecast) / avc_kw) * 100, 0.0)
+    
+    # 3. APERC Progressive Slab Step Breakdown
     slab1_err = np.minimum(error_pct, 15)
-    slab2_err = np.minimum(np.maximum(error_pct - 15, 0), 10)  # 15% to 25%
-    slab3_err = np.minimum(np.maximum(error_pct - 25, 0), 10)  # 25% to 35%
-    slab4_err = np.maximum(error_pct - 35, 0)                 # Above 35%
+    slab2_err = np.minimum(np.maximum(error_pct - 15, 0), 10)
+    slab3_err = np.minimum(np.maximum(error_pct - 25, 0), 10)
+    slab4_err = np.maximum(error_pct - 35, 0)
     
-    # Avoid division by zero for perfect forecasting blocks
-    error_pct_safe = np.where(error_pct == 0, 1, error_pct)
+    # 4. Convert Slab Percentages to Slab Energies (kWh)
+    slab2_energy = (slab2_err / 100) * avc_kwh
+    slab3_energy = (slab3_err / 100) * avc_kwh
+    slab4_energy = (slab4_err / 100) * avc_kwh
     
-    # APERC Deviation Multipliers (0%, 10%, 20%, 30% of PPA rate)
-    weighted_multiplier = (
-        (slab1_err * 0.00) +
-        (slab2_err * 0.10) +
-        (slab3_err * 0.20) +
-        (slab4_err * 0.30)
-    ) / error_pct_safe
+    # 5. Regulatory DSM Penalty (APERC Flat Rates)
+    total_dsm_penalty_rs = (slab2_energy * 0.50) + (slab3_energy * 1.00) + (slab4_energy * 1.50)
     
-    # 4. Standard DSM Penalty Calculation (Out of pocket regulatory penalty)
-    applied_penalty_rate = weighted_multiplier * ppa_rate
-    dsm_penalty_rs = deviation_kwh * applied_penalty_rate
+    # 6. Directional Separation of the Strict DSM Penalty
+    dsm_over_rs = np.where(actual_kwh > forecast_kwh, total_dsm_penalty_rs, 0.0)
+    dsm_under_rs = np.where(actual_kwh < forecast_kwh, total_dsm_penalty_rs, 0.0)
     
-    # 5. Apply Directional Loss Logic
-    # REVENUE LOSS: Loss due to Over-Injection (Actual > Scheduled)
-    # Calculation: The excess un-scheduled energy units evaluated at the PPA rate
-    revenue_loss_rs = np.where(
-        actual_kwh > scheduled_kwh, 
-        (actual_kwh - scheduled_kwh) * ppa_rate, 
-        0.0
-    )
+    # 7. Aggregate Metrics Cleanup & Return Dictionary
+    actual_sum = float(actual_kwh.sum())
+    penalty_sum = float(total_dsm_penalty_rs.sum())
+    revenue_sum = float(gross_revenue.sum())
     
-    # DSM LOSS: Loss due to Under-Injection (Actual < Scheduled)
-    # Calculation: The shortfall units evaluated at the PPA rate
-    dsm_loss_rs = np.where(
-        actual_kwh < scheduled_kwh, 
-        (scheduled_kwh - actual_kwh) * ppa_rate, 
-        0.0
-    )
+    return {
+        'Actual_Generation_kWh': actual_sum,
+        'Target_Generation_kWh': float(forecast_kwh.sum()),
+        'Gross_Revenue_Rs': revenue_sum,
+        'Over_Injection_DSM_Penalty_Rs': float(dsm_over_rs.sum()),
+        'Under_Injection_DSM_Penalty_Rs': float(dsm_under_rs.sum()),
+        'Total_Statutory_DSM_Penalty_Rs': penalty_sum,
+        'DSM_Impact_Rs_per_Actual_kWh': penalty_sum / actual_sum if actual_sum > 0 else 0.0,
+        'Total_loss_percentage': (penalty_sum / revenue_sum) * 100 if revenue_sum > 0 else 0.0
+    }
+
+def calculate_ap_dsm_directional_losses(actual, forecast, avc_kw=84000, ppa_rate=5.0):
+    actual_kwh = actual / 4
+    forecast_kwh = forecast / 4
+    avc_kwh = avc_kw / 4
+    gross_revenue = actual_kwh * ppa_rate
+    error_pct = np.where(avc_kw > 0, (np.abs(actual - forecast) / avc_kw) * 100, 0.0)
     
-    # 6. Total Combined Financial Leakage
-    # Total hit = Statutory DSM Penalties + Over-injection Waste + Under-injection Shortfalls
-    total_financial_loss_rs = dsm_penalty_rs + revenue_loss_rs + dsm_loss_rs
+    slab1_err = np.minimum(error_pct, 15)
+    slab2_err = np.minimum(np.maximum(error_pct - 15, 0), 10)
+    slab3_err = np.minimum(np.maximum(error_pct - 25, 0), 10)
+    slab4_err = np.maximum(error_pct - 35, 0)
     
-    # 7. Normalized Impact Assessment Metric (Rs. lost per Scheduled Unit)
-    loss_impact_per_kwh = np.where(scheduled_kwh > 0, total_financial_loss_rs / scheduled_kwh, 0.0)
+    slab2_energy = (slab2_err / 100) * avc_kwh
+    slab3_energy = (slab3_err / 100) * avc_kwh
+    slab4_energy = (slab4_err / 100) * avc_kwh
     
-    # Clean up array anomalies safely
-    dsm_penalty_rs = np.nan_to_num(dsm_penalty_rs, nan=0.0)
-    revenue_loss_rs = np.nan_to_num(revenue_loss_rs, nan=0.0)
-    dsm_loss_rs = np.nan_to_num(dsm_loss_rs, nan=0.0)
-    total_financial_loss_rs = np.nan_to_num(total_financial_loss_rs, nan=0.0)
-    loss_impact_per_kwh = np.nan_to_num(loss_impact_per_kwh, nan=0.0, posinf=0.0, neginf=0.0)
+    total_dsm_penalty_rs = (slab2_energy * 0.50) + (slab3_energy * 1.00) + (slab4_energy * 1.50)
     
-    # Return a clean, production-ready DataFrame
-    return pd.DataFrame({
-        'Actual_kWh': actual_kwh,
-        'Scheduled_kWh': scheduled_kwh,
-        'Error_Pct': error_pct,
-        'Deviation_kWh': deviation_kwh,
-        'Regulatory_DSM_Penalty_Rs': dsm_penalty_rs,
-        'Revenue_Loss_OverInjection_Rs': revenue_loss_rs,
-        'DSM_Loss_UnderInjection_Rs': dsm_loss_rs,
-        'Total_Financial_Loss_Rs': total_financial_loss_rs,
-        'Loss_Impact_Rs_per_kWh': loss_impact_per_kwh
-    })
+    dsm_over_rs = np.where(actual_kwh > forecast_kwh, total_dsm_penalty_rs, 0.0)
+    dsm_under_rs = np.where(actual_kwh < forecast_kwh, total_dsm_penalty_rs, 0.0)
+    
+    return {
+        'Actual_Generation_kWh': actual_kwh.sum(),
+        'Target_Generation_kWh': forecast_kwh.sum(),
+        'Gross_Revenue_Rs': actual_kwh.sum() * ppa_rate,
+        'Over_Injection_DSM_Penalty_Rs': dsm_over_rs.sum(),
+        'Under_Injection_DSM_Penalty_Rs': dsm_under_rs.sum(),
+        'Total_Statutory_DSM_Penalty_Rs': total_dsm_penalty_rs.sum(),
+        'DSM_Impact_Rs_per_Actual_kWh': total_dsm_penalty_rs.sum() / actual_kwh.sum() if actual_kwh.sum() > 0 else 0.0,
+        'Total_loss_percentage': (total_dsm_penalty_rs.sum() / gross_revenue.sum()) * 100
+    }
 
 def filter_forecast_by_regulation(dfp, regulation="CTU", lag_hours=2):
     dfp = dfp.copy()
