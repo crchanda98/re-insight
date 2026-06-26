@@ -3,8 +3,6 @@ import pandas as pd
 from datetime import datetime as dt, timedelta
 import os
 from ftplib import FTP
-import requests
-import numpy as np
 import utils
 import argparse
 import traceback
@@ -92,7 +90,40 @@ def upload_meas_data(filename):
     db_con.push_meas_data(df_all)
     db_con.logging({"script": SCRIPT_NAME, "log_type": "success", "message": f"Measurement data pushed for {plant_name}"})
 
-def download_ftp_directory(local_path, start, end):
+
+def upload_meas_data_beempao(filename, plant_name):
+    df_all = pd.read_csv(filename)
+    columns=[
+            "plant_id",
+            "record_time",
+            "active_power",
+            "wind_speed",
+            "wind_direction",
+            "ghi",
+            "humidity",
+            "temperature",
+            "precipitation",
+        ]
+    df_db = pd.DataFrame(columns = columns)
+        
+    # df_all = pd.DataFrame()
+    df_all = df_all.rename({"Timestamp": "record_time", "Meter-PQ_Meter-100.Active_Power-kW": "active_power", "WMS-GTI-101.GTI-": "GII"}, axis = 1)
+    df_all["record_time"] = pd.to_datetime(df_all["record_time"])
+    df_all["record_time"] = df_all["record_time"].dt.tz_localize("Asia/Kolkata")
+    record_time_max = df_all["record_time"].max()
+    db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Latest measurement time for {plant_name}: {record_time_max}"})
+    df_all["active_power"] = df_all["active_power"] *1000
+    df_all["plant_name"] = plant_name
+    df_all = pd.merge(df_all, df_static[["plant_name", "plant_id"]], on="plant_name")
+    df_all = pd.concat([df_db, df_all])
+    df_all = df_all.dropna(axis=0, how="all")
+    df_all = df_all[columns]
+    df_all = df_all.set_index(db_columns["meas_table"]["unique_constraint"])
+    db_con.push_meas_data(df_all)
+    db_con.logging({"script": SCRIPT_NAME, "log_type": "success", "message": f"Measurement data pushed for {plant_name}"})
+
+
+def download_ftp_directory(local_path, project_name, start, end):
     time_series = pd.date_range(start, end, freq="15min")
     # Create local directory if it doesn't exist
     if not os.path.exists(local_path):
@@ -102,12 +133,15 @@ def download_ftp_directory(local_path, start, end):
         with FTP(FTP_HOST) as ftp:
             ftp.login(user=FTP_USER, passwd=FTP_PASS)
             print(f"Connected to {FTP_HOST}")
-            db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"FTP server connected"})
-            for itime in time_series:
+            db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"FTP server connected {project_name}"})
+            for itime in time_series[0:1]:
                 for PLANT_NAME in ["Loc_4094", "Loc_4110", "Loc_4111"]:
                     try:
                         filename = itime.strftime("%Y%m%d_%H%M.csv")
-                        local_filename = os.path.join(local_path, PLANT_NAME + "_" + filename)
+                        local_dir = os.path.join(local_path, project_name)
+                        local_filename = os.path.join(local_dir, PLANT_NAME + "_" + filename)
+                        if not os.path.exists(local_dir):
+                            os.makedirs(local_dir)
                         if os.path.exists(local_filename):
                             print(f"Exist {filename}...")
                             # upload_meas_data(local_filename)
@@ -139,7 +173,51 @@ def download_ftp_directory(local_path, start, end):
         e = traceback.format_exc()
         print(f"An error occurred: {e}")
 
+def pull_sekura_scada_data(ftp_cred, project_name, local_path, start, end):
+    FTP_HOST = ftp_cred["host"]
+    FTP_USER = ftp_cred["user"]
+    FTP_PASS = ftp_cred["password"]
+    time_series = pd.date_range(start, end, freq="D")
+    for itime in time_series:
+        try:
+            with FTP(FTP_HOST) as ftp:
+                ftp.login(user=FTP_USER, passwd=FTP_PASS)
+                print(f"Connected to {FTP_HOST}")
+                db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"FTP server connected for {project_name}"})
+                for PLANT_NAME in ["Sekura_Agar350"]:
+                    try:
+                        filename = PLANT_NAME + "_" + itime.strftime("%Y%m%d.csv")
+                        local_dir = os.path.join(local_path, project_name, PLANT_NAME)
+                        if not os.path.exists(local_dir):
+                            os.makedirs(local_dir)
+                        local_filename = os.path.join(local_dir, filename)
+
+                        if os.path.exists(local_filename):
+                            print(f"Exist {filename}...")
+                            continue
+                        remote_path_date = (
+                            f"/FTP/{project_name}"
+                        )
+                        ftp.cwd(remote_path_date)
+                        file_list_ftp = ftp.nlst()
+                        print(f"Processing {filename}...")
+                        if filename in file_list_ftp:
+                            print(f"Found {filename} on FTP server.")
+                            print(f"Downloading {filename}...")
+                            with open(local_filename, "wb") as f:
+                                ftp.retrbinary(f"RETR {filename}", f.write)
+                            upload_meas_data_beempao(local_filename, PLANT_NAME)
+                        else:
+                            print(f"Not Found {filename} on FTP server.")
+                    except Exception as e:
+                        e = traceback.format_exc()
+                        print(f"An error occurred: {e}")
+        except Exception as e:
+            e = traceback.format_exc()
+            print(f"An error occurred: {e}")
+
 
 if __name__ == "__main__":
-    download_ftp_directory(LOCAL_DEST, start=start_time, end=end_time)
+    download_ftp_directory(LOCAL_DEST, project_name = "Vayu", start=start_time, end=end_time)
+    pull_sekura_scada_data(ftp_cred=config["sekura_scada_ftp_cred"], project_name="Beempow", local_path=LOCAL_DEST, start=start_time, end=end_time)
     db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Vayu FTP ETL script completed"})
