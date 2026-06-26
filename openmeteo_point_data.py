@@ -112,9 +112,8 @@ if __name__ == "__main__":
     lons = df_static["longitude"].tolist()
     
     models = ["ecmwf_ifs","ecmwf_ifs025","gfs_global","icon_global","ukmo_global_deterministic_10km","meteofrance_arpege_world","bom_access_global"]
-    models = ["ecmwf_ifs","ecmwf_ifs025"]
 
-    OPENMETEO_MODEL_MANIFEST = "../data_lake/re_insights/openmeteo/openmeteo_model_manifest.csv"
+    OPENMETEO_MODEL_MANIFEST = "../data_lake/re_insights/manifest_files/openmeteo_model_manifest.csv"
     if os.path.exists(OPENMETEO_MODEL_MANIFEST):
         df_manifest = pd.read_csv(OPENMETEO_MODEL_MANIFEST, index_col=0)
     else:
