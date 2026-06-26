@@ -550,7 +550,6 @@ def calculate_ap_dsm_directional_losses(actual, forecast, avc_kw=84000, ppa_rate
 def filter_forecast_by_regulation(dfp, regulation="CTU", lag_hours=2):
     dfp = dfp.copy()
     dfp = dfp.sort_values(by=["prediction_time", "forecast_time"])
-    dfp.to_csv("test.csv")
     if regulation == "CTU":
         lag_mask = (dfp["forecast_time"] - dfp["prediction_time"]) >= pd.Timedelta(hours=2)
         dfp = dfp[lag_mask]
