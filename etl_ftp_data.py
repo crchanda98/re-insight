@@ -107,7 +107,7 @@ def upload_meas_data_beempao(filename, plant_name):
     df_db = pd.DataFrame(columns = columns)
         
     # df_all = pd.DataFrame()
-    df_all = df_all.rename({"Timestamp": "record_time", "Meter-PQ_Meter-100.Active_Power-kW": "active_power", "WMS-GTI-101.GTI-": "GII"}, axis = 1)
+    df_all = df_all.rename({"Timestamp": "record_time", "Meter-PQ_Meter-100.Active_Power-kW": "active_power", "WMS-GTI-101.GTI-": "ghi"}, axis = 1)
     df_all["record_time"] = pd.to_datetime(df_all["record_time"])
     df_all["record_time"] = df_all["record_time"].dt.tz_localize("Asia/Kolkata")
     record_time_max = df_all["record_time"].max()
@@ -194,7 +194,7 @@ def pull_sekura_scada_data(ftp_cred, project_name, local_path, start, end):
 
                         if os.path.exists(local_filename):
                             print(f"Exist {filename}...")
-                            continue
+                            # continue
                         remote_path_date = (
                             f"/FTP/{project_name}"
                         )
