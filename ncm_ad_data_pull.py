@@ -2,12 +2,15 @@ import traceback
 import requests
 import argparse
 from requests.auth import HTTPBasicAuth
-import time, zipfile
-import os, sys
+import time
+import os
 from tqdm import tqdm
 from datetime import datetime as dt, timedelta
 import yaml
 import pandas as pd
+import utils
+from sqlalchemy import create_engine
+from urllib.parse import quote as urlquote
 
 start_time = time.time()
 
@@ -19,25 +22,32 @@ with open(CONFIG_PATH, "r") as f:
 username = CONFIG["ncm_ad_user"]
 password = CONFIG["ncm_ad_password"]
 
+db_cred = CONFIG["db_cred"]
+engine = create_engine(
+f"postgresql://{db_cred['user_name']}:%s@{db_cred['user_ip']}:{db_cred['user_port']}/{db_cred['db_name']}"
+    % urlquote(db_cred["user_passwd"])
+)
+
+
+db_columns = CONFIG["db_columns"]
+weather_table_column = db_columns["weather_table"]["columns"]
+weather_table_column_un = db_columns["weather_table"]["unique_constraint"]
+db_con = utils.DBcon(con = engine, db_schema=db_columns)
+
+df_static = db_con.get_static_data()
+df_static = df_static[df_static["parent_id"] != 0]
+
 url = "https://pdscloud.ncmrwf.gov.in:8443/api/v1/REdownload"
-root_path = CONFIG["ad_ncumg_ncumr_output"]
-temp_dir = os.path.join(CONFIG["temp_dir"], "ncm_ad_data")
 
-csv_path = CONFIG["ncm_csv_data"]
-ncm_temp_data= CONFIG["ncm_temp_data"]
+root_path = os.path.join(CONFIG["temp_dir"], "ncm_ad_data")
 
-if not os.path.exists(temp_dir):
-    os.makedirs(temp_dir)
+model_data = os.path.join(root_path, "model_data")
+csv_path = os.path.join(root_path, "csv_data")
+ncm_temp_data= os.path.join(root_path, "temp_data")
 
-if not os.path.exists(ncm_temp_data):
-    os.makedirs(ncm_temp_data)
-
-# manifest = []
-# if os.path.exists(CONFIG["adani_ncm_log"]):
-#     with open(CONFIG["adani_ncm_log"], "r") as f:
-#         manifest = f.read()
-#     if len(manifest) > 0:
-#         manifest = manifest.split("\n")
+os.makedirs(model_data, exist_ok=True)
+os.makedirs(csv_path, exist_ok=True)
+os.makedirs(ncm_temp_data, exist_ok=True)
 
 parser = argparse.ArgumentParser(description="Pull NCM data")
 parser.add_argument("--lag_days", type=int, default=2, help="Number of lag days to process")
@@ -60,18 +70,19 @@ files = [
      ]
 
 subdir_name = None
-MODEL_MANIFEST = "../data_lake/re_insights/manifest_files/ncm_ad.csv"
+MODEL_MANIFEST = os.path.join(root_path, "ncm_ad.csv")
+
 if os.path.exists(MODEL_MANIFEST):
     df_manifest = pd.read_csv(MODEL_MANIFEST, index_col=0)
 else:
     df_manifest = pd.DataFrame(columns=["ncum_g", "ncum_r"])
 
-for idate in dates_str:
+for idate in dates_str[0:1]:
     print(f"Processing date: {idate}")
     for icycle in cycle:
         date_name = idate + icycle
         print(date_name)
-        for file in files:
+        for file in files[0:1]:
             if 'data_adani_ncumg' in file['variable']:
                 subdir_name = "data_adani_ncumg"
                 model_name = "ncum_g"
@@ -108,12 +119,16 @@ for idate in dates_str:
                         os.makedirs(fileDownloadPath, exist_ok=True)
                         zip_path = os.path.join(fileDownloadPath, filename)
                         total_size = int(response.headers.get('content-length', 0))
-                        with open(zip_path, 'wb') as f, tqdm(desc=filename, total=total_size, unit='B', unit_scale=True) as pbar:
-                            for chunk in response.iter_content(chunk_size=65536):
-                                if chunk: 
-                                    f.write(chunk)   
-                                    pbar.update(len(chunk))   
-                        print(f"Files downloaded and extracted successfully to {fileDownloadPath}")
+                        if not os.path.exists(zip_path):
+                            with open(zip_path, 'wb') as f, tqdm(desc=filename, total=total_size, unit='B', unit_scale=True) as pbar:
+                                for chunk in response.iter_content(chunk_size=65536):
+                                    if chunk: 
+                                        f.write(chunk)   
+                                        pbar.update(len(chunk))   
+                            print(f"Files downloaded and extracted successfully to {fileDownloadPath}")
+                        df_out = utils.extract_ncm_ad(fname = zip_path, dest = ncm_temp_data, df_stn=df_static, zone = model_name)
+                        df_out.to_csv(os.path.join(csv_path, f"{idate}{icycle}_{model_name}.csv"), index=False)
+
                         df_manifest.loc[date_name, model_name] = 1
                     else:
                         print(f"Failed to download file: {response.status_code} - {response.text}")
@@ -123,6 +138,6 @@ for idate in dates_str:
                 err = traceback.format_exc()
                 print(err)
 end_time = time.time()
-df_manifest.to_csv(MODEL_MANIFEST)
+# df_manifest.to_csv(MODEL_MANIFEST)
 elapsed_time = end_time - start_time
 print(f"Execution time: {elapsed_time} seconds")

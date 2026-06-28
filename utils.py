@@ -582,3 +582,142 @@ def filter_forecast_by_regulation(dfp, regulation="CTU", lag_hours=2):
     dfp = dfp.drop_duplicates(subset=["forecast_time"], keep="last")
     return dfp
 
+def assign_global_and_regional_grids(df, global_boxes, regional_boxes, lat_col='latitude', lon_col='longitude'):
+    """
+    Vectorized function to match rows against both Global and Regional grids.
+    Assigns None (null) independently if a point falls outside either set.
+    """
+    df_out = df.copy()
+    
+    # Initialize both tracking columns with None (null values)
+    df_out['assigned_global_grid'] = None
+    df_out['assigned_regional_grid'] = None
+    
+    # 1. Process Global Boxes
+    for box in global_boxes:
+        mask_global = (
+            df_out['assigned_global_grid'].isna() & 
+            (df_out[lon_col] >= box['lon_min']) & (df_out[lon_col] <= box['lon_max']) &
+            (df_out[lat_col] >= box['lat_min']) & (df_out[lat_col] <= box['lat_max'])
+        )
+        df_out.loc[mask_global, 'assigned_global_grid'] = box['grid_id']
+        
+    # 2. Process Regional Boxes
+    for box in regional_boxes:
+        mask_regional = (
+            df_out['assigned_regional_grid'].isna() & 
+            (df_out[lon_col] >= box['lon_min']) & (df_out[lon_col] <= box['lon_max']) &
+            (df_out[lat_col] >= box['lat_min']) & (df_out[lat_col] <= box['lat_max'])
+        )
+        df_out.loc[mask_regional, 'assigned_regional_grid'] = box['grid_id']
+        
+    return df_out
+
+def extract_ncm_ad(fname, dest, df_stn, zone):
+
+    # Setup separate grid definitions (giving them distinct names to tell them apart)
+    global_definitions = [
+        {"grid_id": 1, "lon_min": 77.0, "lon_max": 83.5, "lat_min": 18.75, "lat_max": 28.5},
+        {"grid_id": 2, "lon_min": 68.0, "lon_max": 77.0, "lat_min": 20.5,  "lat_max": 31.0},
+        {"grid_id": 3, "lon_min": 75.0, "lon_max": 80.0, "lat_min": 8.0,   "lat_max": 18.75},
+    ]
+
+    regional_definitions = [
+        {"grid_id": 1, "lon_min": 77.0, "lon_max": 83.5, "lat_min": 18.75, "lat_max": 28.5},
+        {"grid_id": 2, "lon_min": 68.0, "lon_max": 77.0, "lat_min": 20.5,  "lat_max": 31.0},
+        {"grid_id": 3, "lon_min": 75.0, "lon_max": 80.0, "lat_min": 8.0,   "lat_max": 18.75},
+    ]
+
+    all_columns = [
+        "plant_id",
+        "prediction_time",
+        "forecast_time",
+        "height",
+        "model_name",
+        "wind_speed",
+        "wind_direction",
+        "ghi",
+        "humidity",
+        "temperature",
+        "precipitation",
+    ]
+    df_all = pd.DataFrame(columns=all_columns)
+    try:
+        with tarfile.open(fname, "r:gz") as tar:
+            tar.extractall(path=dest)  # Extracts all files to the specified path
+    except tarfile.TarError as e:
+        print(f"An error occurred: {e}")
+    except FileNotFoundError:
+        print(f"Error: The file {fname} was not found.")
+    
+    df_stn_with_box = assign_global_and_regional_grids(
+        df_stn, 
+        global_boxes=global_definitions, 
+        regional_boxes=regional_definitions,
+    )
+
+    df_nwp = []
+    dest_path = Path(dest)
+    for region in range(1,4):
+        if zone == "ncum_g":
+            df_st = df_stn_with_box[df_stn_with_box["assigned_regional_grid"] == region]
+            model_name = "ncum_ad_r"
+            nc_file = os.path.join(dest, f"u_wind_R{region}.nc")
+            ds_u = xr.open_dataset(nc_file)
+            nc_file = os.path.join(dest, f"v_wind_R{region}.nc")
+            ds_v = xr.open_dataset(nc_file)
+            nc_file = os.path.join(dest, f"solarradiation_15m_R{region}.nc")
+            ds_ghi = xr.open_dataset(nc_file)
+            ds_speed = xr.merge([ds_u, ds_v], join="outer")
+            ds_surface = xr.merge([ds_ghi], join="outer")
+            ds_comb = xr.merge([ds_speed, ds_surface], join = "inner")
+
+        if zone == "ncum_r":
+            df_st = df_stn_with_box[df_stn_with_box["assigned_global_grid"] == region]
+            model_name = "ncum_ad_g"
+            nc_file = os.path.join(dest, f"solar_radiation_R{region}.nc")
+            ds_ghi = xr.open_dataset(nc_file)
+            ds_surface = ds_ghi.copy()
+        
+        if len(df_st) == 0:
+            continue
+        
+        for _, idf in df_st.iterrows():
+            lat = idf["latitude"]
+            lon = idf["longitude"]
+            plant_id = idf["plant_id"]
+            if zone == "ncum_g":
+                df_temp_speed = ds_speed.sel(lat=lat, lon=lon, method="nearest").to_dataframe().reset_index()
+                df_temp_surf = ds_surface.sel(lat=lat, lon=lon, method="nearest").to_dataframe().reset_index()
+                df_temp_surf["lev"] = 0
+                df_temp = pd.merge(df_temp_speed, df_temp_surf, on=["time", "lon", "lat", "lev"], how="outer")
+            
+            if zone == "ncum_r":
+                df_temp = ds_surface.sel(lat=lat, lon=lon, method="nearest").to_dataframe().reset_index()
+                df_temp["lev"] = 0
+
+            df_temp["plant_id"] = plant_id
+            df_nwp.append(df_temp)
+        
+        df_nwp = pd.concat(df_nwp)
+        if zone == "global":
+            df_nwp["wind_speed"] = np.sqrt(df_nwp["u"] ** 2 + df_nwp["v"] ** 2)
+            df_nwp["wind_direction"] = (
+                np.degrees(np.arctan2(df_nwp["u"], df_nwp["v"])) + 180
+            ) % 360
+            df_nwp = df_nwp[df_nwp["lev"].isin([0, 50, 80, 100.0, 120.0])]
+        
+        if zone == "regional":
+            df_nwp["lev"] = 0
+        
+        df_nwp["model_name"] = model_name
+        df_nwp = df_nwp.rename({"time": "forecast_time", "lev": "height", "dswrf": "ghi"}, axis=1)
+        df_nwp['forecast_time'] = pd.to_datetime(df_nwp['forecast_time'])
+        df_nwp["prediction_time"] = df_nwp["forecast_time"].min()
+        df_nwp["prediction_time"] = df_nwp["prediction_time"].dt.floor('6h')
+        df_all = pd.concat([df_all, df_nwp])
+        df_all = df_all[all_columns]
+        df_all = df_all.dropna(how = "all")
+    for nc_file in dest_path.glob("*.nc"):
+        nc_file.unlink()
+    return df_all
