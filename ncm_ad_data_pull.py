@@ -1,3 +1,4 @@
+import traceback
 import requests
 import argparse
 from requests.auth import HTTPBasicAuth
@@ -31,12 +32,12 @@ if not os.path.exists(temp_dir):
 if not os.path.exists(ncm_temp_data):
     os.makedirs(ncm_temp_data)
 
-manifest = []
-if os.path.exists(CONFIG["adani_ncm_log"]):
-    with open(CONFIG["adani_ncm_log"], "r") as f:
-        manifest = f.read()
-    if len(manifest) > 0:
-        manifest = manifest.split("\n")
+# manifest = []
+# if os.path.exists(CONFIG["adani_ncm_log"]):
+#     with open(CONFIG["adani_ncm_log"], "r") as f:
+#         manifest = f.read()
+#     if len(manifest) > 0:
+#         manifest = manifest.split("\n")
 
 parser = argparse.ArgumentParser(description="Pull NCM data")
 parser.add_argument("--lag_days", type=int, default=2, help="Number of lag days to process")
@@ -70,22 +71,22 @@ for idate in dates_str:
     for icycle in cycle:
         date_name = idate + icycle
         print(date_name)
-        if date_name not in manifest:
-            with requests.Session() as session:
-                session.auth = HTTPBasicAuth(username, password)
-                for file in files:
-                    if 'data_adani_ncumg' in file['variable']:
-                        subdir_name = "data_adani_ncumg"
-                        model_name = "ncum_g"
-                    if 'data_adani_ncumr' in file['variable']:
-                        subdir_name = "data_adani_ncumr"
-                        model_name = "ncum_r"
-                    if model_name in df_manifest.columns:
-                        existing_prediction_time = df_manifest[model_name].dropna().index.tolist()
-                        existing_prediction_time = [x.strftime("%Y%m%d%H") if isinstance(x, dt) else str(x) for x in existing_prediction_time]
-                    else:
-                        existing_prediction_time = []
-                    
+        for file in files:
+            if 'data_adani_ncumg' in file['variable']:
+                subdir_name = "data_adani_ncumg"
+                model_name = "ncum_g"
+            if 'data_adani_ncumr' in file['variable']:
+                subdir_name = "data_adani_ncumr"
+                model_name = "ncum_r"
+            if model_name in df_manifest.columns:
+                existing_prediction_time = df_manifest[model_name].dropna().index.tolist()
+                existing_prediction_time = [x.strftime("%Y%m%d%H") if isinstance(x, dt) else str(x) for x in existing_prediction_time]
+            else:
+                existing_prediction_time = []
+            try:
+                if date_name not in existing_prediction_time:
+                    with requests.Session() as session:
+                        session.auth = HTTPBasicAuth(username, password)
                     headers = {
                             'inputdate': idate,
                             'cycle': icycle,
@@ -103,7 +104,7 @@ for idate in dates_str:
                         filename = file['filename'] 
 
                     if response.status_code == 200:
-                        fileDownloadPath = os.path.join(root_path, idate)
+                        fileDownloadPath = os.path.join(root_path, model_name, idate)
                         os.makedirs(fileDownloadPath, exist_ok=True)
                         zip_path = os.path.join(fileDownloadPath, filename)
                         total_size = int(response.headers.get('content-length', 0))
@@ -116,7 +117,11 @@ for idate in dates_str:
                         df_manifest.loc[date_name, model_name] = 1
                     else:
                         print(f"Failed to download file: {response.status_code} - {response.text}")
-
+                else:
+                    print(f"{model_name} already exists for {date_name}")
+            except:
+                err = traceback.format_exc()
+                print(err)
 end_time = time.time()
 df_manifest.to_csv(MODEL_MANIFEST)
 elapsed_time = end_time - start_time
