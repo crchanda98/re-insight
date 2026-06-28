@@ -11,6 +11,8 @@ import pandas as pd
 import utils
 from sqlalchemy import create_engine
 from urllib.parse import quote as urlquote
+import subprocess
+from pathlib import Path
 
 start_time = time.time()
 
@@ -18,6 +20,7 @@ CONFIG_PATH = os.environ.get("WEATHER_CONFIG", "reinsight_config.yml")
 SCRIPT_NAME = os.path.basename(__file__)
 with open(CONFIG_PATH, "r") as f:
     CONFIG = yaml.safe_load(f)
+EXTRACT_FROM_EXIST_DATA = True
 
 username = CONFIG["ncm_ad_user"]
 password = CONFIG["ncm_ad_password"]
@@ -77,12 +80,12 @@ if os.path.exists(MODEL_MANIFEST):
 else:
     df_manifest = pd.DataFrame(columns=["ncum_g", "ncum_r"])
 
-for idate in dates_str[0:1]:
+for idate in dates_str:
     print(f"Processing date: {idate}")
     for icycle in cycle:
         date_name = idate + icycle
         print(date_name)
-        for file in files[0:1]:
+        for file in files:
             if 'data_adani_ncumg' in file['variable']:
                 subdir_name = "data_adani_ncumg"
                 model_name = "ncum_g"
@@ -115,21 +118,34 @@ for idate in dates_str[0:1]:
                         filename = file['filename'] 
 
                     if response.status_code == 200:
-                        fileDownloadPath = os.path.join(root_path, model_name, idate)
+                        fileDownloadPath = os.path.join(model_data, model_name, idate)
                         os.makedirs(fileDownloadPath, exist_ok=True)
                         zip_path = os.path.join(fileDownloadPath, filename)
-                        total_size = int(response.headers.get('content-length', 0))
-                        if not os.path.exists(zip_path):
-                            with open(zip_path, 'wb') as f, tqdm(desc=filename, total=total_size, unit='B', unit_scale=True) as pbar:
+                        remote_size = int(response.headers.get('content-length', 0))
+                        if os.path.exists(zip_path):
+                            local_size = os.path.getsize(zip_path)
+                        if not os.path.exists(zip_path) or local_size != remote_size:
+                            with open(zip_path, 'wb') as f, tqdm(desc=filename, total=remote_size, unit='B', unit_scale=True) as pbar:
                                 for chunk in response.iter_content(chunk_size=65536):
                                     if chunk: 
                                         f.write(chunk)   
-                                        pbar.update(len(chunk))   
+                                        pbar.update(len(chunk))
+                            local_size = os.path.getsize(zip_path)
                             print(f"Files downloaded and extracted successfully to {fileDownloadPath}")
-                        df_out = utils.extract_ncm_ad(fname = zip_path, dest = ncm_temp_data, df_stn=df_static, zone = model_name)
-                        df_out.to_csv(os.path.join(csv_path, f"{idate}{icycle}_{model_name}.csv"), index=False)
-
-                        df_manifest.loc[date_name, model_name] = 1
+                        
+                        if os.path.exists(zip_path) and local_size == remote_size:
+                            print(f"Extracting data for {date_name}")
+                            df_out = utils.extract_ncm_ad(fname = zip_path, dest = ncm_temp_data, df_stn=df_static, zone = model_name)
+                            df_out.to_csv(os.path.join(csv_path, f"{idate}{icycle}_{model_name}.csv"), index=False)
+                            df_out = df_out[db_columns["weather_table"]["columns"]]
+                            df_out = df_out.set_index(db_columns["weather_table"]["unique_constraint"])
+                            db_con.push_weather_data(df_out)
+                            df_manifest.loc[date_name, model_name] = 1
+                            dest_path = Path(ncm_temp_data)
+                            for nc_file in dest_path.glob("*.nc"):
+                                nc_file.unlink()
+                        else:
+                            print(f"File issue for {model_name}, {date_name}")
                     else:
                         print(f"Failed to download file: {response.status_code} - {response.text}")
                 else:
@@ -138,6 +154,6 @@ for idate in dates_str[0:1]:
                 err = traceback.format_exc()
                 print(err)
 end_time = time.time()
-# df_manifest.to_csv(MODEL_MANIFEST)
+df_manifest.to_csv(MODEL_MANIFEST)
 elapsed_time = end_time - start_time
 print(f"Execution time: {elapsed_time} seconds")

@@ -13,6 +13,7 @@ import traceback
 import glob
 from pathlib import Path
 from ftplib import FTP
+import subprocess
 
 def push_fct_to_ftp(filename, FTP_HOST, FTP_USER, FTP_PASS):
     base_name = os.path.basename(filename)
@@ -661,7 +662,7 @@ def extract_ncm_ad(fname, dest, df_stn, zone):
     for region in range(1,4):
         if zone == "ncum_g":
             df_st = df_stn_with_box[df_stn_with_box["assigned_regional_grid"] == region]
-            model_name = "ncum_ad_r"
+            model_name = "ncum_g"
             nc_file = os.path.join(dest, f"u_wind_R{region}.nc")
             ds_u = xr.open_dataset(nc_file)
             nc_file = os.path.join(dest, f"v_wind_R{region}.nc")
@@ -674,10 +675,11 @@ def extract_ncm_ad(fname, dest, df_stn, zone):
 
         if zone == "ncum_r":
             df_st = df_stn_with_box[df_stn_with_box["assigned_global_grid"] == region]
-            model_name = "ncum_ad_g"
+            model_name = "ncum_r"
             nc_file = os.path.join(dest, f"solar_radiation_R{region}.nc")
             ds_ghi = xr.open_dataset(nc_file)
             ds_surface = ds_ghi.copy()
+            ds_ghi.close()
         
         if len(df_st) == 0:
             continue
@@ -699,25 +701,25 @@ def extract_ncm_ad(fname, dest, df_stn, zone):
             df_temp["plant_id"] = plant_id
             df_nwp.append(df_temp)
         
-        df_nwp = pd.concat(df_nwp)
-        if zone == "global":
-            df_nwp["wind_speed"] = np.sqrt(df_nwp["u"] ** 2 + df_nwp["v"] ** 2)
-            df_nwp["wind_direction"] = (
-                np.degrees(np.arctan2(df_nwp["u"], df_nwp["v"])) + 180
-            ) % 360
-            df_nwp = df_nwp[df_nwp["lev"].isin([0, 50, 80, 100.0, 120.0])]
-        
-        if zone == "regional":
-            df_nwp["lev"] = 0
-        
-        df_nwp["model_name"] = model_name
-        df_nwp = df_nwp.rename({"time": "forecast_time", "lev": "height", "dswrf": "ghi"}, axis=1)
-        df_nwp['forecast_time'] = pd.to_datetime(df_nwp['forecast_time'])
-        df_nwp["prediction_time"] = df_nwp["forecast_time"].min()
-        df_nwp["prediction_time"] = df_nwp["prediction_time"].dt.floor('6h')
-        df_all = pd.concat([df_all, df_nwp])
-        df_all = df_all[all_columns]
-        df_all = df_all.dropna(how = "all")
-    for nc_file in dest_path.glob("*.nc"):
-        nc_file.unlink()
+    df_nwp = pd.concat(df_nwp)
+    if zone == "ncum_g":
+        df_nwp["wind_speed"] = np.sqrt(df_nwp["u"] ** 2 + df_nwp["v"] ** 2)
+        df_nwp["wind_direction"] = (
+            np.degrees(np.arctan2(df_nwp["u"], df_nwp["v"])) + 180
+        ) % 360
+        df_nwp = df_nwp[df_nwp["lev"].isin([0, 50, 80, 100.0, 120.0])]
+    
+    if zone == "ncum_r":
+        df_nwp["lev"] = 0
+    
+    df_nwp["model_name"] = model_name
+    df_nwp = df_nwp.rename({"time": "forecast_time", "lev": "height", "dswrf": "ghi"}, axis=1)
+    df_nwp['forecast_time'] = pd.to_datetime(df_nwp['forecast_time'])
+    df_nwp["prediction_time"] = df_nwp["forecast_time"].min()
+    df_nwp["prediction_time"] = df_nwp["prediction_time"].dt.floor('6h')
+    df_nwp['prediction_time'] = df_nwp['prediction_time'].dt.tz_localize('UTC')
+    df_nwp['forecast_time'] = df_nwp['forecast_time'].dt.tz_localize('UTC')
+    df_all = pd.concat([df_all, df_nwp])
+    df_all = df_all[all_columns]
+    df_all = df_all.dropna(how = "all")
     return df_all
