@@ -136,7 +136,7 @@ if __name__ == "__main__":
             prediction_time_str = prediction_time.strftime("%Y%m%d%H")
             if prediction_time_str in existing_prediction_time:
                 print(f"Exists {model}")
-                # continue
+                continue
             try:
                 forecast_data = get_wind_and_cloud_forecast(lats, lons, model = model, forecast_days=1)
             except Exception as e:
