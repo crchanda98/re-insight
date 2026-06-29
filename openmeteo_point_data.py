@@ -10,11 +10,16 @@ import utils
 from datetime import datetime as dt
 from urllib.parse import quote as urlquote
 from sqlalchemy import create_engine
+import numpy as np
 
 
 CONFIG_PATH = os.getenv("WEATHER_CONFIG", "reinsight_config.yml")
 with open(CONFIG_PATH, "r") as f:
     config = yaml.safe_load(f)
+
+db_columns = config["db_columns"]
+weather_table_column = db_columns["weather_table"]["columns"]
+weather_table_column_un = db_columns["weather_table"]["unique_constraint"]
 
 SCRIPT_NAME = os.path.basename(__file__)
 
@@ -111,7 +116,7 @@ if __name__ == "__main__":
     lats = df_static["latitude"].tolist()
     lons = df_static["longitude"].tolist()
     
-    models = ["ecmwf_ifs","ecmwf_ifs025","gfs_global","icon_global","ukmo_global_deterministic_10km","meteofrance_arpege_world","bom_access_global"]
+    models = ["ecmwf_ifs","ecmwf_ifs025","gfs_global","icon_global","ukmo_global_deterministic_10km","meteofrance_arpege_world"]
 
     OPENMETEO_MODEL_MANIFEST = "../data_lake/re_insights/manifest_files/openmeteo_model_manifest.csv"
     if os.path.exists(OPENMETEO_MODEL_MANIFEST):
@@ -140,7 +145,7 @@ if __name__ == "__main__":
             
             all_locations = []
             # Loop through each item in the JSON list
-            for item in forecast_data:
+            for i, item in enumerate(forecast_data):
                 # 1. Extract the hourly weather metrics dictionary
                 hourly_dict = item['hourly']
                 
@@ -148,8 +153,8 @@ if __name__ == "__main__":
                 df_hourly = pd.DataFrame(hourly_dict)
             
                 # 3. Add the location's metadata to every row in this temporary DataFrame
-                df_hourly['latitude'] = item['latitude']
-                df_hourly['longitude'] = item['longitude']
+                df_hourly['latitude'] = lats[i]
+                df_hourly['longitude'] = lons[i]
 
                 # Use .get() for location_id since the first location doesn't have it
                 df_hourly['location_id'] = item.get('location_id', None) 
@@ -159,16 +164,61 @@ if __name__ == "__main__":
             # Combine all individual location dataframes into one master DataFrame
             final_df = pd.concat(all_locations, ignore_index=True)
 
-            # Optional: Reorder columns to put metadata on the left
-            metadata_cols = ['location_id', 'latitude', 'longitude', 'time']
-            other_cols = [col for col in final_df.columns if col not in metadata_cols]
-            final_df = final_df[metadata_cols + other_cols]
-            final_df["prediction_time_utc"] = prediction_time
-            # final_df = final_df.merge(df_static, on=["latitude", "longitude"], how="left")
+
+            # 1. Unpivot both wind_speed and wind_direction columns by height
+            df_long = pd.wide_to_long(
+                final_df, 
+                stubnames=['wind_speed', 'wind_direction'], 
+                i=['time', 'latitude', 'longitude', 'cloud_cover', 'cloud_cover_low', 'cloud_cover_mid', 'cloud_cover_high', 'shortwave_radiation'], 
+                j='height', 
+                sep='_', 
+                suffix=r'\d+m'
+            ).reset_index()
+
+            # 2. Clean up the 'height' column values (e.g., '10m' -> 10)
+            df_long['height'] = df_long['height'].str.replace('m', '').astype(int)
+
+            # 3. Rename columns to match your target schema
+            df_long = df_long.rename(columns={
+                'time': 'forecast_time',
+                'cloud_cover_low': 'low_cloud',
+                'cloud_cover_mid': 'medium_cloud',
+                'cloud_cover_high': 'high_cloud',
+                'cloud_cover': 'total_cloud',
+                'shortwave_radiation': 'ghi'
+            })
+
+            # 4. Clear out cloud and radiation metrics only for rows that are NOT 10m
+            cloud_and_ghi_cols = ['low_cloud', 'medium_cloud', 'high_cloud', 'total_cloud', 'ghi']
+            df_long.loc[df_long['height'] != 10, cloud_and_ghi_cols] = np.nan
+
+            # 5. Populate placeholder columns for the rest of your schema features
+            for col in ['humidity', 'temperature', 'precipitation']:
+                df_long[col] = np.nan
+
+            # 6. Arrange columns in your desired schema layout
+            final_cols = [
+                'forecast_time', 'latitude', 'longitude', 'height', 
+                'wind_speed', 'wind_direction', 'low_cloud', 'medium_cloud', 
+                'high_cloud', 'total_cloud', 'ghi', 'humidity', 'temperature', 'precipitation'
+            ]
+            df_target = df_long[final_cols]
+
+            df_target["model_name"] = model
+            df_target['forecast_time'] = pd.to_datetime(df_target['forecast_time'])
+            df_target["prediction_time"] = df_target["forecast_time"].dt.floor('6h')
+            df_target['prediction_time'] = df_target['prediction_time'].dt.tz_localize('UTC')
+            df_target['forecast_time'] = df_target['forecast_time'].dt.tz_localize('UTC')
+
+            df_target = pd.merge(df_target, df_static, on=["latitude", "longitude"])
+
+            df_target = df_target[db_columns["weather_table"]["columns"]]
+            df_target = df_target.set_index(db_columns["weather_table"]["unique_constraint"])
+            
+
             data_filepath = f"../data_lake/re_insights/openmeteo/data/{prediction_time.strftime('%Y%m%d_%H%M%S')}_{model}_fct.csv"
             final_df.to_csv(data_filepath, index=False)
             df_manifest.loc[prediction_time_str, model] = 1
-            df_manifest.to_csv(OPENMETEO_MODEL_MANIFEST)
             db_con.logging({"script": model, "log_type": "success", "message": f"Openmeteo data fetch script completed for {model}, prediction time: {prediction_time_str}"})
         
         except Exception as e:
@@ -176,5 +226,5 @@ if __name__ == "__main__":
             print(e)
             db_con.logging({"script": model, "log_type": "error", "message": f"Openmeteo data fetch script failed for {model}: {e}"})
             continue
-
+df_manifest.to_csv(OPENMETEO_MODEL_MANIFEST)
 db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Openmeteo data fetch script completed"})
