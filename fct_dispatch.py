@@ -47,13 +47,13 @@ def push_fct_to_ftp(filename):
         db_con.logging({"script": SCRIPT_NAME, "log_type": "error", "message": f"FCT data push failed for {filename}: {e}"})
 
 df_static = db_con.get_static_data()
-df_static = df_static[df_static["parent_id"].isin([1, 2, 3])]
+df_static = df_static[df_static["plant_id"].isin([1, 2, 3])]
 
 for _, idf in df_static.iterrows():
     try:
         print(f"Running ID for {idf['plant_name']}")
         farm_name = idf["plant_name"]
-        fct_filename = f"../data_lake/re_insights/fct_dispatch/intraday_wind_{farm_name}_{date_now_ist.strftime('%Y%m%d_%H%M')}.csv"
+        fct_filename = f"../data_lake/re_insights/fct_dispatch/intraday_wind_{farm_name}_{date_now.strftime('%Y%m%d_%H%M')}.csv"
         fct_data = db_con.get_fct_data(plant=farm_name, fct_src="inhouse", model_name="intraday_wind", \
             start_date=fct_start_time.strftime("%Y-%m-%dT%H:%M:%S"), \
         end_date=fct_end_time.strftime("%Y-%m-%dT%H:%M:%S"))

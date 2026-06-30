@@ -42,7 +42,7 @@ db_con = utils.DBcon(con = engine, db_schema=db_columns)
 db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Intraday wind script started"})
 
 df_static = db_con.get_static_data()
-df_static = df_static[df_static["parent_id"].isin([1, 2, 3])]
+df_static = df_static[df_static["plant_id"].isin([1, 2, 3])]
 
 date_now = utils.get_last_15_min_slot()
 fct_start_time = date_now + timedelta(hours = 1, minutes = 30)

@@ -36,6 +36,8 @@ db_con = utils.DBcon(con = engine, db_schema=db_columns)
 db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"DA wind script started"})
 
 df_static = db_con.get_static_data()
+df_static = df_static[df_static["plant_id"].isin([1, 2, 3])]
+
 df_static["plant_details"] = df_static["plant_details"].apply(lambda x: re.sub(r'(\w+):', r'"\1":', x))
 df_static["plant_details"] = df_static["plant_details"].apply(lambda x: json.loads(x))
 
