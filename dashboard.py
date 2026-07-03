@@ -183,7 +183,7 @@ def measurement_page():
         with r2_col2:
             model_name = st.selectbox(
                 "Model Name",
-                ("intraday_wind", "om_xgb"),
+                ("intraday_wind", "om_xgb", "intraday_wind_ifs"),
             )
         with r2_col3:
             st.text_input("Model Name Input", value="intraday_wind")

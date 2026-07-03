@@ -66,7 +66,7 @@ for _, idf_parent in df_hybrid.iterrows():
         print(f"Running model aggrigator for {idf_parent['plant_name']}")
         for _, idf_child in df_static_child.iterrows():
             farm_name = idf_child["plant_name"]
-            for imodel in ["om_xgb", "intraday_wind"]:
+            for imodel in ["om_xgb", "intraday_wind", "intraday_wind_ifs"]:
                 fct_data = db_con.get_fct_data(plant=farm_name, fct_src="inhouse", model_name=imodel, \
                     start_date=fct_start_time.strftime("%Y-%m-%dT%H:%M:%S"), end_date=fct_end_time.strftime("%Y-%m-%dT%H:%M:%S"))
                 fct_data = fct_data.drop(['created_at', 'plant_name', 'plant_id'], axis = 1)
