@@ -9,6 +9,7 @@ from sklearn.ensemble import RandomForestRegressor
 from urllib.parse import quote as urlquote
 from sqlalchemy import create_engine
 from ftplib import FTP
+from zoneinfo import ZoneInfo
 
 CONFIG_PATH = os.getenv("WEATHER_CONFIG", "reinsight_config.yml")
 with open(CONFIG_PATH, "r") as f:
@@ -45,6 +46,8 @@ df_static = df_static[df_static["plant_id"].isin([1, 2, 3])]
 
 date_now = utils.get_last_15_min_slot()
 fct_start_time = date_now + timedelta(hours = 1, minutes = 30)
+fct_start_time_ist = dt.now(ZoneInfo("Asia/Kolkata")) + timedelta(hours = 1, minutes = 30)
+fct_start_time_history = date_now - timedelta(days = 1)
 fct_end_time = fct_start_time + timedelta(hours = 6)
 
 train_end_time = date_now
@@ -89,9 +92,8 @@ for _, idf in df_static.iterrows():
 
         ### Fetching nwp model forecast data
         df_nwp_fct = db_con.get_weather_data(plant=farm_name, model="ncm_d2", \
-            start_date=fct_start_time.strftime("%Y-%m-%dT%H:%M:%S"), \
+            start_date=fct_start_time_history.strftime("%Y-%m-%dT%H:%M:%S"), \
             end_date=fct_end_time.strftime("%Y-%m-%dT%H:%M:%S"))
-
         df_nwp_fct = df_nwp_fct[df_nwp_fct["height"] == 80]
         df_nwp_fct = df_nwp_fct.sort_values(by=["forecast_time", "prediction_time"], ascending=[True, False])
         df_nwp_fct = df_nwp_fct.drop_duplicates(subset="forecast_time", keep="first")
@@ -111,7 +113,10 @@ for _, idf in df_static.iterrows():
         df_nwp_fct = df_nwp_fct.sort_values(by="forecast_time")
         df_nwp_fct = df_nwp_fct.reset_index(drop=True)
         df_nwp_fct = df_nwp_fct.rename({"forecast_time": "record_time", "wind_speed": "wind_speed_ncm_d2"}, axis = 1)
-
+        df_nwp_fct = df_nwp_fct.set_index("record_time")
+        df_nwp_fct_f = df_nwp_fct.loc[fct_start_time.strftime("%Y-%m-%dT%H:%M:%S"):fct_end_time.strftime("%Y-%m-%dT%H:%M:%S")]
+        df_nwp_fct = df_nwp_fct.reset_index()
+        df_nwp_fct = df_nwp_fct.dropna()
 
         df_train = pd.merge(meas_data, df_nwp, on="record_time", how="left")
         train_time_start = df_train["record_time"].min()
@@ -120,7 +125,7 @@ for _, idf in df_static.iterrows():
         db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Training time for {farm_name}: {train_time_start} to {train_time_end}, training length: {train_length}"})
 
         features = ["u_ncm_d2", "v_ncm_d2", "wind_speed_lag1", "wind_speed_lag4", "wind_speed_lag8", "hour", "doy"]
-        features = ["wind_speed_ncm_d2", "wind_speed_lag1", "wind_speed_lag4", "wind_speed_lag8", "hour", "doy"]
+        features = ["wind_speed_ncm_d2", "wind_speed_lag1", "wind_speed_lag4", "wind_speed_lag8", "hour"]
         target = "active_power"
 
         X_train, y_train = df_train[features], df_train[target]
@@ -143,6 +148,7 @@ for _, idf in df_static.iterrows():
         df_nwp_fct["prediction_time"] = df_nwp_fct["prediction_time"].dt.tz_localize("Asia/Kolkata")
         df_nwp_fct["forecast_source"] = "inhouse"
         df_nwp_fct["model_name"] = "intraday_wind"
+        df_nwp_fct = df_nwp_fct[df_nwp_fct['forecast_time'] > fct_start_time_ist]
         db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"FCT data for {farm_name} with latest prediction time {latest_pred_time}"})
         df_nwp_fct.to_csv(f"../data_lake/re_insights/rel_time_fct/intraday_wind_{farm_name}_{date_now.strftime('%Y%m%d_%H%M')}.csv", index = False)
 
