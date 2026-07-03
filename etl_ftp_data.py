@@ -106,7 +106,6 @@ def upload_meas_data_beempao(filename, plant_name):
         ]
     df_db = pd.DataFrame(columns = columns)
         
-    # df_all = pd.DataFrame()
     df_all = df_all.rename({"Timestamp": "record_time", "Meter-PQ_Meter-100.Active_Power-kW": "active_power", "WMS-GTI-101.GTI-": "ghi"}, axis = 1)
     df_all["record_time"] = pd.to_datetime(df_all["record_time"])
     df_all["record_time"] = df_all["record_time"].dt.tz_localize("Asia/Kolkata")
@@ -134,7 +133,7 @@ def download_ftp_directory(local_path, project_name, start, end):
             ftp.login(user=FTP_USER, passwd=FTP_PASS)
             print(f"Connected to {FTP_HOST}")
             db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"FTP server connected {project_name}"})
-            for itime in time_series[0:1]:
+            for itime in time_series:
                 for PLANT_NAME in ["Loc_4094", "Loc_4110", "Loc_4111"]:
                     try:
                         filename = itime.strftime("%Y%m%d_%H%M.csv")
@@ -153,14 +152,13 @@ def download_ftp_directory(local_path, project_name, start, end):
                         file_list_ftp = ftp.nlst()
                         print(f"Processing {filename}...")
                         if filename in file_list_ftp:
-                            print(f"Found {filename} on FTP server.")
-                            print(f"Downloading {filename}...")
+                            print(f"Found {filename} for {PLANT_NAME} on FTP server. Downloading")
                             with open(local_filename, "wb") as f:
                                 ftp.retrbinary(f"RETR {filename}", f.write)
                             print(local_filename)
                             upload_meas_data(local_filename)
                         else:
-                            print(f"Not Found {filename} on FTP server.")
+                            print(f"Not Found {filename} for {PLANT_NAME} on FTP server.")
                     except Exception as e:
                         e = traceback.format_exc()
                         print(f"An error occurred: {e}")
