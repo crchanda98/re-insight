@@ -165,7 +165,7 @@ for _, idf in df_static.iterrows():
         df_nwp_fct = df_nwp_fct[fct_table_column]
         df_nwp_fct = df_nwp_fct.set_index(fct_table_column_un)
         db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"FCT data for {farm_name} with latest prediction time {latest_pred_time}"})
-        # db_con.push_fct_data(df_nwp_fct)
+        db_con.push_fct_data(df_nwp_fct)
         db_con.logging({"script": SCRIPT_NAME, "log_type": "success", "message": f"FCT data generated for {farm_name}"})
     except Exception as e:
         e = traceback.format_exc()
