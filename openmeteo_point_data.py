@@ -22,6 +22,9 @@ weather_table_column = db_columns["weather_table"]["columns"]
 weather_table_column_un = db_columns["weather_table"]["unique_constraint"]
 
 SCRIPT_NAME = os.path.basename(__file__)
+APIM_KEY = config["openmeteo_key_jade"]
+HEADERS  = {'Ocp-Apim-Subscription-Key': APIM_KEY}
+GATEWAY="https://jbsfcstplapimgatewaydev.azure-api.net/weather"
 
 def latest_prediction_time(model):
     '''
@@ -96,6 +99,41 @@ def get_wind_and_cloud_forecast(latitudes: List[float], longitudes: List[float],
         print(f"An error occurred while fetching data from Open-Meteo: {e}")
         return {}
 
+
+def get_live_forecast(lats, lons, forecast_days, model):
+    if isinstance(lats, (int, float)):
+        lats = [lats]
+    if isinstance(lons, (int, float)):
+        lons = [lons]
+        
+    # Open-Meteo expects comma-separated strings for multiple coordinates
+    lat_string = ",".join(map(str, lats))
+    lon_string = ",".join(map(str, lons))
+
+    model_params = [
+            "wind_speed_10m,wind_speed_80m,wind_speed_120m,"
+            "wind_direction_10m,wind_direction_80m,wind_direction_120m,"
+            "cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,"
+            "shortwave_radiation"
+        ]
+    model_params = model_params[0]
+    r = requests.get(
+        f'{GATEWAY}/v1/forecast',
+        params={
+            'latitude':     lat_string,
+            'longitude':    lon_string,
+            'hourly':       model_params,
+            'models': model,
+            'forecast_days': forecast_days,
+            'wind_speed_unit': 'ms'
+        },
+        headers=HEADERS
+    )
+    print(f'Status: {r.status_code}')
+    out = r.json()
+    return out
+
+
 if __name__ == "__main__":
     db_cred = config["db_cred"]
     engine = create_engine(
@@ -138,7 +176,7 @@ if __name__ == "__main__":
                 print(f"Exists {model}")
                 continue
             try:
-                forecast_data = get_wind_and_cloud_forecast(lats, lons, model = model, forecast_days=1)
+                forecast_data = get_live_forecast(lats, lons, model = model, forecast_days=1)
             except Exception as e:
                 db_con.logging({"script": model, "log_type": "error", "message": f"Openmeteo data fetch script failed for {model}: {e}"})
                 continue
