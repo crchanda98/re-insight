@@ -214,10 +214,10 @@ if __name__ == "__main__":
 
             df_target = df_target[db_columns["weather_table"]["columns"]]
             df_target = df_target.set_index(db_columns["weather_table"]["unique_constraint"])
-            
+            db_con.push_weather_data(df_target)
 
             data_filepath = f"../data_lake/re_insights/openmeteo/data/{prediction_time.strftime('%Y%m%d_%H%M%S')}_{model}_fct.csv"
-            final_df.to_csv(data_filepath, index=False)
+            df_target.to_csv(data_filepath)
             df_manifest.loc[prediction_time_str, model] = 1
             db_con.logging({"script": model, "log_type": "success", "message": f"Openmeteo data fetch script completed for {model}, prediction time: {prediction_time_str}"})
         
