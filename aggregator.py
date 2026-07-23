@@ -17,7 +17,6 @@ SCRIPT_NAME = os.path.basename(__file__)
 date_now_ist = utils.get_last_15_min_slot()
 date_now_utc = date_now_ist - timedelta(hours = 5, minutes = 30)
 
-
 fct_end_time = date_now_utc + timedelta(hours = 6)
 fct_start_time = date_now_utc - timedelta(hours = 6)
 
@@ -46,6 +45,8 @@ db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Intraday
 df_static = db_con.get_static_data()
 df_hybrid = df_static[df_static["parent_id"] == 0]
 
+forecast_models = config["internal_models"]
+
 group_cols_model = [
     "prediction_time",
     "forecast_time",
@@ -66,7 +67,7 @@ for _, idf_parent in df_hybrid.iterrows():
         print(f"Running model aggrigator for {idf_parent['plant_name']}")
         for _, idf_child in df_static_child.iterrows():
             farm_name = idf_child["plant_name"]
-            for imodel in ["om_xgb", "intraday_wind", "intraday_wind_ifs"]:
+            for imodel in forecast_models:
                 fct_data = db_con.get_fct_data(plant=farm_name, fct_src="inhouse", model_name=imodel, \
                     start_date=fct_start_time.strftime("%Y-%m-%dT%H:%M:%S"), end_date=fct_end_time.strftime("%Y-%m-%dT%H:%M:%S"))
                 fct_data = fct_data.drop(['created_at', 'plant_name', 'plant_id'], axis = 1)

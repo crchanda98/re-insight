@@ -15,8 +15,10 @@ warnings.filterwarnings(action="ignore")
 CONFIG_PATH = os.getenv("WEATHER_CONFIG", "reinsight_config.yml")
 with open(CONFIG_PATH, "r") as f:
     CONFIG = yaml.safe_load(f)
+
 REQUIRE_LOGIN = CONFIG["dashboard"]["login"]
 CREDENTIALS = CONFIG["dashboard"]["credentials"]
+FORECAST_MODELS = CONFIG["internal_models"]
 
 # Page config for better appearance
 st.set_page_config(
@@ -183,7 +185,7 @@ def measurement_page():
         with r2_col2:
             model_name = st.selectbox(
                 "Model Name",
-                ("intraday_wind", "om_xgb", "intraday_wind_ifs"),
+                FORECAST_MODELS,
             )
         with r2_col3:
             st.text_input("Model Name Input", value="intraday_wind")
