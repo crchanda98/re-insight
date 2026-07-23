@@ -145,7 +145,7 @@ for _, idf in df_static.iterrows():
         # covariates_series_deploy.columns = [str(col) for col in covariates_series_deploy.columns]
 
         model = LightGBMModel(
-            lags=[-9, -10, -11, -12],
+            lags=[-2, -3, -4, -5],
             lags_future_covariates=[
                 0,
                 1,
