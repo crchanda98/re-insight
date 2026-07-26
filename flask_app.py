@@ -189,6 +189,7 @@ def get_all_static_table():
 
 
 @app.route("/static_table/push", methods=["POST"])
+@require_api_key
 def push_static_data():
     """
     Push a single or multiple static plant records into static_table.
@@ -244,6 +245,7 @@ def push_static_data():
 
 
 @app.route("/meas/push", methods=["POST"])
+@require_api_key
 def push_meas_data():
     """Upload measurement records to meas_table via the API."""
     data = request.json.get("data", [])
@@ -267,6 +269,7 @@ def push_meas_data():
 
 
 @app.route("/meas/pull/<string:plant_name>", methods=["GET"])
+@require_api_key
 def pull_meas_data(plant_name):
     """
     Fetch measurement records for a specific plant name.
