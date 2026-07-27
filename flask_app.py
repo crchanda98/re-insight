@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from sqlalchemy import text
 from functools import wraps
 import pandas as pd
+from pangres import upsert
 import yaml
 import os
 import traceback
@@ -12,6 +13,115 @@ import psycopg2
 import json
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+
+'''
+curl  -X GET "http://127.0.0.1:5000/pwr_fct/pull?plant_name=Loc_4110&fct_src=inhouse&model_name=intraday_wind&start_time=2026-03-01T00:00:00&end_time=2026-04-30T23:59:59" -H "x-api-key: abcd1234"
+
+curl -X GET "http://127.0.0.1:5000/meas/pull?plant_name=Loc_4110&start_time=2026-03-01T00:00:00&end_time=2026-04-30T23:59:59" -H "x-api-key: abcd1234"
+
+curl -X GET "http://127.0.0.1:5000/nwp/pull?plant_name=Loc_4110&model_name=ecmwf_ifs&start_time=2026-03-01T00:00:00&end_time=2026-04-30T23:59:59" -H "x-api-key: abcd1234"
+
+curl -X GET "http://127.0.0.1:5000/static_table/pull" -H "x-api-key: abcd1234"
+'''
+
+class DBcon:
+    def __init__(self, con, db_schema, schma_name = "re_insight"):
+        self.db_schema = db_schema
+        self.conn = con
+        self.schma_name = schma_name
+        self.df_static = pd.read_sql("select * from re_insight.static_table", con=self.conn)
+    
+    def get_static_data(self):
+        return self.df_static
+    
+    def push_static_data(self, idf):
+        if "plant_name" in idf.columns:
+            idf = idf.set_index("plant_name")
+        upsert(
+            con=self.conn,
+            df=idf,
+            table_name="static_table",
+            schema=self.schma_name,
+            if_row_exists="update",
+        )
+    
+    def get_weather_data(self, plant, model, start_date, end_date):
+        ist = self.df_static[self.df_static["plant_name"] == plant].iloc[0]
+        df_weather = pd.read_sql(f"select * from re_insight.weather_table \
+            where plant_id = {ist['plant_id']} \
+            and model_name = '{model}' \
+            and forecast_time between '{start_date}' and '{end_date}'", con=self.conn)
+        df_weather["plant_name"] = ist["plant_name"]
+        return df_weather
+    
+    def push_weather_data(self, idf):
+        upsert(
+            con=self.conn,
+            df=idf,
+            table_name="weather_table",
+            schema="re_insight",
+            if_row_exists="update",
+        )
+    
+    def get_meas_data(self, plant, start_date, end_date):
+        ist = self.df_static[self.df_static["plant_name"] == plant].iloc[0]
+        df_weather = pd.read_sql(f"select * from re_insight.meas_table \
+            where plant_id = {ist['plant_id']} \
+            and record_time between '{start_date}' and '{end_date}'", con=self.conn)
+        df_weather["plant_name"] = ist["plant_name"]
+        return df_weather
+
+    def push_meas_data(self, idf):
+        upsert(
+            con=self.conn,
+            df=idf,
+            table_name="meas_table",
+            schema="re_insight",
+            if_row_exists="update",
+        )
+
+    def get_fct_data(self, plant, fct_src, model_name, start_date, end_date):
+        ist = self.df_static[self.df_static["plant_name"] == plant].iloc[0]
+        df_weather = pd.read_sql(f"select * from re_insight.forecast_table \
+            where plant_id = {ist['plant_id']} \
+            and forecast_source = '{fct_src}' \
+            and model_name = '{model_name}' \
+            and forecast_time between '{start_date}' and '{end_date}'", con=self.conn)
+        df_weather["plant_name"] = ist["plant_name"]
+        return df_weather
+
+    def push_fct_data(self, idf):
+        upsert(
+            con=self.conn,
+            df=idf,
+            table_name="forecast_table",
+            schema="re_insight",
+            if_row_exists="update",
+        )
+    
+    def get_log_data(self, script, start_date, end_date):
+        df_log = pd.read_sql(f"select * from re_insight.logging_table where script = '{script}' \
+            and created_at between '{start_date} 00:00:00' and '{end_date} 23:59:59' order by created_at", con=self.conn)
+        return df_log
+    
+    def push_log_data(self, idf):
+        idf = idf.sort_values(["script", "logging_time", "log_type"])
+        idf = idf.drop_duplicates(subset=['logging_time', 'script', 'log_type'], keep='last')
+        idf = idf.set_index(["script", "logging_time", "log_type"])
+        upsert(
+            con=self.conn,
+            df=idf,
+            table_name="logging_table",
+            schema="re_insight",
+            if_row_exists="update",
+        )
+
+    def logging(self, log_dict):
+        if "logging_time" not in log_dict:
+            log_dict["logging_time"] = dt.now(timezone.utc)
+        df_log = pd.DataFrame([log_dict])
+        self.push_log_data(df_log)
+
 
 CONFIG_PATH = os.getenv("WEATHER_CONFIG", "reinsight_config.yml")
 with open(CONFIG_PATH, "r") as f:
@@ -47,12 +157,15 @@ db_host = os.environ.get('DB_HOST', db_cred['user_ip'])
 db_user = os.environ.get('DB_USER', db_cred['user_name'])
 db_pass = os.environ.get('DB_PASSWORD', db_cred['user_passwd'])
 db_name = os.environ.get('DB_NAME', db_cred['db_name'])
-db_port = os.environ.get('DB_PORT', db_cred['user_ip'])
+db_port = os.environ.get('DB_PORT', db_cred['user_port'])
 
 encoded_pass = urlquote(db_pass)
 engine = create_engine(
     f"postgresql://{db_user}:{encoded_pass}@{db_host}:{db_port}/{db_name}"
 )
+db_columns = config["db_columns"]
+
+db_con = DBcon(con=engine, db_schema=db_columns)
 
 def log_error(endpoint, error_message, traceback_str=None):
     """
@@ -128,41 +241,21 @@ def push_weather_data():
         log_error("/weather/push", error_msg, tb_str)
         return jsonify({"error": error_msg}), 500
 
-@app.route("/weather/pull/<string:plant_name>", methods=["GET"])
+@app.route("/nwp/pull", methods=["GET"])
 @require_api_key
-def pull_weather_data(plant_name):
+def pull_weather_data():
     """
     Pull weather data for a specific plant by its name.
     """
+    plant_name = request.args.get("plant_name")
     model_name = request.args.get("model_name")
-    start_date = request.args.get("start_date")
-    end_date = request.args.get("end_date")
+    start_time = request.args.get("start_time")
+    end_time = request.args.get("end_time")
 
     try:
-        # 1. Base Query using named parameters
-        query = """
-            SELECT w.* 
-            FROM re_insight.weather_table w
-            JOIN re_insight.static_table s ON w.plant_id = s.id
-            WHERE s.plant_name = :plant_name
-        """
-        params = {"plant_name": plant_name}
-
-        # 2. Dynamic Filters
-        if model_name:
-            query += " AND w.model_name = :model_name"
-            params["model_name"] = model_name
-            
-        if start_date:
-            query += " AND w.forecast_time >= :start_date"
-            params["start_date"] = start_date
-            
-        if end_date:
-            query += " AND w.forecast_time <= :end_date"
-            params["end_date"] = end_date
-
-        # 3. Safe Execution with text()
-        df = pd.read_sql(text(query), con=engine.connect(), params=params)
+        df = db_con.get_weather_data(plant=plant_name, model=model_name,
+                                        start_date=start_time, 
+                                        end_date=end_time)
         result = df.to_dict(orient="records")
 
         return jsonify(result), 200
@@ -273,36 +366,52 @@ def push_meas_data():
         return jsonify({"error": error_msg}), 500
 
 
-@app.route("/meas/pull/<string:plant_name>", methods=["GET"])
+@app.route("/meas/pull", methods=["GET"])
 @require_api_key
-def pull_meas_data(plant_name):
+def pull_meas_data():
     """
     Fetch measurement records for a specific plant name.
     Optional query params: ?start_time=ISO8601&end_time=ISO8601
-    http://127.0.0.1:5000/meas/pull/vayu?start_time=2026-03-01T00:00:00&end_time=2026-04-30T23:59:59
+    http://127.0.0.1:5000/meas/pull?plant_name=Loc_4110&start_time=2026-03-01T00:00:00&end_time=2026-04-30T23:59:59
     """
     start_time = request.args.get("start_time")
     end_time = request.args.get("end_time")
+    plant_name = request.args.get("plant_name")
     try:
-        query = """
-            SELECT m.* FROM re_insight.meas_table m
-            JOIN re_insight.static_table s ON m.plant_id = s.id
-            WHERE s.plant_name = ?
-        """
-        params = [plant_name]
-        if start_time:
-            query += " AND m.record_time >= ?"
-            params.append(start_time)
-        if end_time:
-            query += " AND m.record_time <= ?"
-            params.append(end_time)
-        df = pd.read_sql(query, engine, params=params)
+        df = db_con.get_meas_data(plant=plant_name, \
+            start_date=start_time, \
+            end_date=end_time)
         result = df.to_dict(orient="records")
         return jsonify(result), 200
     except Exception as e:
         error_msg = str(e)
         tb_str = traceback.format_exc()
         log_error(f"/meas/pull/{plant_name}", error_msg, tb_str)
+        return jsonify({"error": error_msg}), 500
+
+
+
+@app.route("/pwr_fct/pull", methods=["GET"])
+@require_api_key
+def pull_pwr_fct_data():
+    """
+    Fetch power forecast records for a specific plant name.
+    Optional query params: ?start_time=ISO8601&end_time=ISO8601
+    http://127.0.0.1:5000/pwr_fct/pull?plant_name=Loc_4110&fct_src=inhouse&model_name=intraday_wind&start_time=2026-03-01T00:00:00&end_time=2026-04-30T23:59:59
+    """
+    start_time = request.args.get("start_time")
+    end_time = request.args.get("end_time")
+    plant_name = request.args.get("plant_name")
+    fct_src = request.args.get("fct_src")
+    model_name = request.args.get("model_name")
+    try:
+        df = db_con.get_fct_data(plant=plant_name, fct_src=fct_src, model_name=model_name, start_date=start_time, end_date=end_time)
+        result = df.to_dict(orient="records")
+        return jsonify(result), 200
+    except Exception as e:
+        error_msg = str(e)
+        tb_str = traceback.format_exc()
+        log_error(f"/pwr_fct/pull/{plant_name}", error_msg, tb_str)
         return jsonify({"error": error_msg}), 500
 
 if __name__ == "__main__":
