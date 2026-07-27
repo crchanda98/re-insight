@@ -1,13 +1,13 @@
 from flask import Flask, request, jsonify
+from sqlalchemy import text
 from functools import wraps
-import duckdb
 import pandas as pd
 import yaml
 import os
 import traceback
 from datetime import datetime
 from urllib.parse import quote as urlquote
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 import psycopg2
 import json
 from flask_limiter import Limiter
@@ -42,9 +42,16 @@ DB_PATH = config["db_path"]
 
 db_cred = config["db_cred"]
 
+#### ADDING THIS TO MAKE FLASK PICK CREDENTIAL FROM ENV VARIABLE
+db_host = os.environ.get('DB_HOST', db_cred['user_ip'])
+db_user = os.environ.get('DB_USER', db_cred['user_name'])
+db_pass = os.environ.get('DB_PASSWORD', db_cred['user_passwd'])
+db_name = os.environ.get('DB_NAME', db_cred['db_name'])
+db_port = os.environ.get('DB_PORT', db_cred['user_ip'])
+
+encoded_pass = urlquote(db_pass)
 engine = create_engine(
-    f"postgresql://{db_cred['user_name']}:%s@{db_cred['user_ip']}:{db_cred['user_port']}/{db_cred['db_name']}"
-    % urlquote(db_cred["user_passwd"])
+    f"postgresql://{db_user}:{encoded_pass}@{db_host}:{db_port}/{db_name}"
 )
 
 def log_error(endpoint, error_message, traceback_str=None):
@@ -56,7 +63,7 @@ def log_error(endpoint, error_message, traceback_str=None):
         with engine.connect() as conn:
             run_time = datetime.now()
             conn.execute(
-                "INSERT INTO re_forecasting.logging_table (run_time, endpoint, error_message, traceback) VALUES (?, ?, ?, ?)",
+                "INSERT INTO re_insight.logging_table (run_time, endpoint, error_message, traceback) VALUES (?, ?, ?, ?)",
                 [run_time, endpoint, error_message, traceback_str],
             )
     except Exception as e:
@@ -87,12 +94,12 @@ def push_weather_data():
             # and insert the new ones successfully instead of failing the entire operation.
             
             # Get count before insert
-            initial_count = conn.execute("SELECT COUNT(*) FROM re_forecasting.weather_table").fetchone()[0]
+            initial_count = conn.execute("SELECT COUNT(*) FROM re_insight.weather_table").fetchone()[0]
             
-            conn.execute(f"INSERT INTO re_forecasting.weather_table ({columns}) SELECT * FROM df ON CONFLICT DO NOTHING")
+            conn.execute(f"INSERT INTO re_insight.weather_table ({columns}) SELECT * FROM df ON CONFLICT DO NOTHING")
             
         # Get count after insert
-        final_count = conn.execute("SELECT COUNT(*) FROM re_forecasting.weather_table").fetchone()[0]
+        final_count = conn.execute("SELECT COUNT(*) FROM re_insight.weather_table").fetchone()[0]
         
         inserted_count = final_count - initial_count
         ignored_count = len(df) - inserted_count
@@ -121,52 +128,50 @@ def push_weather_data():
         log_error("/weather/push", error_msg, tb_str)
         return jsonify({"error": error_msg}), 500
 
-
 @app.route("/weather/pull/<string:plant_name>", methods=["GET"])
 @require_api_key
 def pull_weather_data(plant_name):
     """
     Pull weather data for a specific plant by its name.
-    Optional query param: ?model_name=ECMWF
-    http://127.0.0.1:5000/weather/pull/vayu?model_name=ncm_d2&start_date=2026-03-27T00:00:00&end_date=2026-03-29T15:00:00
     """
     model_name = request.args.get("model_name")
     start_date = request.args.get("start_date")
     end_date = request.args.get("end_date")
 
     try:
-        
-        # We perform a JOIN to fetch weather rows where the corresponding static table plant_name matches
+        # 1. Base Query using named parameters
         query = """
             SELECT w.* 
-            FROM re_forecasting.weather_table w
-            JOIN re_forecasting.static_table s ON w.plant_id = s.id
-            WHERE s.plant_name = ?
+            FROM re_insight.weather_table w
+            JOIN re_insight.static_table s ON w.plant_id = s.id
+            WHERE s.plant_name = :plant_name
         """
-        params = [plant_name]
+        params = {"plant_name": plant_name}
 
+        # 2. Dynamic Filters
         if model_name:
-            query += " AND w.model_name = ?"
-            params.append(model_name)
+            query += " AND w.model_name = :model_name"
+            params["model_name"] = model_name
             
         if start_date:
-            query += " AND w.forecast_time >= ?"
-            params.append(start_date)
+            query += " AND w.forecast_time >= :start_date"
+            params["start_date"] = start_date
             
         if end_date:
-            query += " AND w.forecast_time <= ?"
-            params.append(end_date)
+            query += " AND w.forecast_time <= :end_date"
+            params["end_date"] = end_date
 
-        # Fetch as a list of dictionaries
-        df = pd.read_sql(query, engine, params=params)
+        # 3. Safe Execution with text()
+        df = pd.read_sql(text(query), con=engine.connect(), params=params)
         result = df.to_dict(orient="records")
 
         return jsonify(result), 200
+
     except Exception as e:
         error_msg = str(e)
         tb_str = traceback.format_exc()
         log_error(f"/weather/pull/{plant_name}", error_msg, tb_str)
-        return jsonify({"error": error_msg}), 500
+        return jsonify({"error": error_msg}), 500@app.route("/static_table/pull", methods=["GET"])
 
 @app.route("/static_table/pull", methods=["GET"])
 @require_api_key
@@ -215,7 +220,7 @@ def push_static_data():
         set_clause = ", ".join([f'"{col}" = EXCLUDED."{col}"' for col in update_cols])
         
         upsert_query = f"""
-            INSERT INTO re_forecasting.static_table ({columns}) 
+            INSERT INTO re_insight.static_table ({columns}) 
             SELECT * FROM df
             ON CONFLICT (plant_name) 
             DO UPDATE SET {set_clause};
@@ -224,7 +229,7 @@ def push_static_data():
             conn.execute(upsert_query)
         return jsonify({"message": f"Successfully upserted {len(df)} static records"}), 201
 
-    except duckdb.ConstraintException as e:
+    except psycopg2.IntegrityError as e:
         error_msg = str(e)
         log_error("/static_table/push", f"ConstraintException: {error_msg}")
         return (
@@ -255,9 +260,9 @@ def push_meas_data():
         df = pd.DataFrame(data)
         # Ensure the DataFrame columns match the DB schema; let DuckDB handle column mapping
         with engine.connect() as conn:
-            conn.execute("INSERT INTO re_forecasting.meas_table SELECT * FROM df")
+            conn.execute("INSERT INTO re_insight.meas_table SELECT * FROM df")
         return jsonify({"message": f"Inserted {len(df)} records"}), 201
-    except duckdb.ConstraintException as e:
+    except psycopg2.IntegrityError as e:
         error_msg = str(e)
         log_error("/meas/push", f"ConstraintException: {error_msg}")
         return jsonify({"error": "Constraint violation", "details": error_msg}), 409
@@ -280,8 +285,8 @@ def pull_meas_data(plant_name):
     end_time = request.args.get("end_time")
     try:
         query = """
-            SELECT m.* FROM re_forecasting.meas_table m
-            JOIN re_forecasting.static_table s ON m.plant_id = s.id
+            SELECT m.* FROM re_insight.meas_table m
+            JOIN re_insight.static_table s ON m.plant_id = s.id
             WHERE s.plant_name = ?
         """
         params = [plant_name]
