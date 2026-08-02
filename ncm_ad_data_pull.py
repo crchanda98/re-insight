@@ -11,7 +11,6 @@ import pandas as pd
 import utils
 from sqlalchemy import create_engine
 from urllib.parse import quote as urlquote
-import subprocess
 from pathlib import Path
 
 start_time = time.time()
@@ -31,10 +30,13 @@ f"postgresql://{db_cred['user_name']}:%s@{db_cred['user_ip']}:{db_cred['user_por
     % urlquote(db_cred["user_passwd"])
 )
 
-
 db_columns = CONFIG["db_columns"]
 weather_table_column = db_columns["weather_table"]["columns"]
 weather_table_column_un = db_columns["weather_table"]["unique_constraint"]
+
+db_con = utils.DBcon(con = engine, db_schema=db_columns)
+db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"NCM AD FTP ETL script started"})
+
 db_con = utils.DBcon(con = engine, db_schema=db_columns)
 
 df_static = db_con.get_static_data()
@@ -80,6 +82,9 @@ if os.path.exists(MODEL_MANIFEST):
 else:
     df_manifest = pd.DataFrame(columns=["ncum_g", "ncum_r"])
 
+dates_str.reverse()
+cycle.reverse()
+
 for idate in dates_str:
     print(f"Processing date: {idate}")
     for icycle in cycle:
@@ -92,6 +97,8 @@ for idate in dates_str:
             if 'data_adani_ncumr' in file['variable']:
                 subdir_name = "data_adani_ncumr"
                 model_name = "ncum_r"
+            print(f"Processing data for {idate}, {icycle}, {model_name}")
+            
             if model_name in df_manifest.columns:
                 existing_prediction_time = df_manifest[model_name].dropna().index.tolist()
                 existing_prediction_time = [x.strftime("%Y%m%d%H") if isinstance(x, dt) else str(x) for x in existing_prediction_time]
@@ -132,14 +139,19 @@ for idate in dates_str:
                                         pbar.update(len(chunk))
                             local_size = os.path.getsize(zip_path)
                             print(f"Files downloaded and extracted successfully to {fileDownloadPath}")
+                            db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Data downloaded for {model_name}, {date_name}"})
                         
                         if os.path.exists(zip_path) and local_size == remote_size:
-                            print(f"Extracting data for {date_name}")
+                            db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Data avaialable for {model_name}, {date_name}"})
                             df_out = utils.extract_ncm_ad(fname = zip_path, dest = ncm_temp_data, df_stn=df_static, zone = model_name)
                             df_out.to_csv(os.path.join(csv_path, f"{idate}{icycle}_{model_name}.csv"), index=False)
+                            df_db = pd.DataFrame(columns = db_columns["weather_table"]["columns"])
+                            df_out = pd.concat([df_db, df_out])
+                            df_out = df_out.dropna(axis=0, how="all")
                             df_out = df_out[db_columns["weather_table"]["columns"]]
                             df_out = df_out.set_index(db_columns["weather_table"]["unique_constraint"])
                             db_con.push_weather_data(df_out)
+                            db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Data extracted for {model_name}, {date_name}"})
                             df_manifest.loc[date_name, model_name] = 1
                             dest_path = Path(ncm_temp_data)
                             for nc_file in dest_path.glob("*.nc"):
@@ -152,7 +164,10 @@ for idate in dates_str:
                     print(f"{model_name} already exists for {date_name}")
             except:
                 err = traceback.format_exc()
+                db_con.logging({"script": SCRIPT_NAME, "log_type": "error", "message": f"Data not available for {model_name}, {date_name}"})
+                print(f"Data not available for {model_name}, {date_name}")
                 print(err)
+
 end_time = time.time()
 df_manifest.to_csv(MODEL_MANIFEST)
 elapsed_time = end_time - start_time
