@@ -302,5 +302,5 @@ def pull_sekura_scada_data_minute_log(ftp_cred, project_name, local_path, start,
 
 if __name__ == "__main__":
     download_ftp_directory(LOCAL_DEST, project_name = "Vayu", start=start_time, end=end_time)
-    pull_sekura_scada_data_minute_log(ftp_cred=config["sekura_scada_ftp_cred"], project_name="Beempow", local_path=LOCAL_DEST, start=start_time, end=end_time)
+    pull_sekura_scada_data_minute_log(ftp_cred=config["sekura_scada_ftp_cred"], project_name="Agar", local_path=LOCAL_DEST, start=start_time, end=end_time)
     db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Vayu FTP ETL script completed"})
