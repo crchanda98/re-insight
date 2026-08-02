@@ -378,12 +378,15 @@ class DBcon:
             if_row_exists="update",
         )
     
-    def get_weather_data(self, plant, model, start_date, end_date):
+    def get_weather_data(self, plant, model, start_date, end_date, print_query = False):
         ist = self.df_static[self.df_static["plant_name"] == plant].iloc[0]
-        df_weather = pd.read_sql(f"select * from re_insight.weather_table \
+        query = f"select * from re_insight.weather_table \
             where plant_id = {ist['plant_id']} \
             and model_name = '{model}' \
-            and forecast_time between '{start_date}' and '{end_date}'", con=self.conn)
+            and forecast_time between '{start_date}' and '{end_date}'"
+        if print_query:
+            print(query)
+        df_weather = pd.read_sql(query, con=self.conn)
         df_weather["plant_name"] = ist["plant_name"]
         return df_weather
     
@@ -396,11 +399,14 @@ class DBcon:
             if_row_exists="update",
         )
     
-    def get_meas_data(self, plant, start_date, end_date):
+    def get_meas_data(self, plant, start_date, end_date, print_query = False):
         ist = self.df_static[self.df_static["plant_name"] == plant].iloc[0]
-        df_weather = pd.read_sql(f"select * from re_insight.meas_table \
+        query = f"select * from re_insight.meas_table \
             where plant_id = {ist['plant_id']} \
-            and record_time between '{start_date}' and '{end_date}'", con=self.conn)
+            and record_time between '{start_date}' and '{end_date}'"
+        if print_query:
+            print(query)
+        df_weather = pd.read_sql(query, con=self.conn)
         df_weather["plant_name"] = ist["plant_name"]
         return df_weather
 
