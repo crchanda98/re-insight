@@ -1,4 +1,3 @@
-from IPython.core import display_functions
 import pandas as pd
 import yaml
 import os
@@ -6,7 +5,6 @@ import traceback
 import numpy as np
 import utils
 from datetime import datetime as dt, timedelta
-from sklearn.ensemble import RandomForestRegressor
 from urllib.parse import quote as urlquote
 from sqlalchemy import create_engine
 from ftplib import FTP
