@@ -126,22 +126,27 @@ for _, idf in df_static.iterrows():
         df_nwp = pd.merge(df_nwp, df_nwp_i, on="forecast_time", how="left")
         df_nwp = df_nwp.rename({"forecast_time": "record_time"}, axis = 1)
         EXOGEN_VAR = [col for col in df_nwp.columns if "ghi" in col]
-
+        EXOGEN_VAR = ['ghi_ncum_r', 'ghi_ncum_g']
+        all_columns = EXOGEN_VAR + ["active_power"]
+        
         df_model = pd.merge(meas_data, df_nwp, on="record_time", how="outer")
         df_model["record_time"] = df_model["record_time"].dt.tz_convert("Asia/Kolkata")
         df_model["record_time"] = df_model["record_time"].dt.tz_localize(None)
 
         df_model = df_model.set_index("record_time")
         meas_data_cs = get_clear_sky(df_model[["active_power"]].dropna())
-
-        df_model = df_model.asfreq('15min')
-        df_model = df_model.resample("15min").interpolate(method = "linear")
+        df_model = df_model[all_columns]
 
         df_train = df_model.loc[train_start_time.strftime("%Y-%m-%dT%H:%M:%S"):train_end_time.strftime("%Y-%m-%dT%H:%M:%S")]
         df_fct = df_model.loc[train_start_time.strftime("%Y-%m-%dT%H:%M:%S"):fct_end_time.strftime("%Y-%m-%dT%H:%M:%S")]
         df_fct = df_fct.dropna(subset=EXOGEN_VAR)
         df_train = df_train.dropna(subset="active_power")
+        df_train = df_train.dropna()
         
+        df_train = df_train.asfreq('15min')
+        df_fct = df_fct.asfreq('15min')
+        df_train = df_train.resample("15min").interpolate(method = "linear")
+
         target_series_deploy = TimeSeries.from_dataframe(df_train, value_cols="active_power")
         covariates_series_deploy = TimeSeries.from_dataframe(df_fct, value_cols=EXOGEN_VAR)
         
