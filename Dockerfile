@@ -15,7 +15,8 @@ COPY requirements.txt .
 # Upgrade pip and install all data science and streaming packages
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir psycopg2-binary
+    pip install --no-cache-dir psycopg2-binary && \
+    pip install flask-limiter
 
 # Copy the rest of your application code into the container
 COPY . .

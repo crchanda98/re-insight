@@ -7,3 +7,6 @@ tqdm>=4.66.0
 pyyaml>=6.0.0
 sqlalchemy>=2.0.0
 pangres>=4.1.0
+extra_streamlit_components==0.1.81
+flask-limiter
+Flask

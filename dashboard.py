@@ -134,7 +134,6 @@ def get_static_data_cached():
         st.error(f"Failed to fetch static data: {e}")
         return pd.DataFrame()
 
-import numpy as np
 def penalty_kpi(sch, act, avc, ppa = 5):
     penalty = utils.calculate_mp_dsm_directional_losses(
         actual=act,
