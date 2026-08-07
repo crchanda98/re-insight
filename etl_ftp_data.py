@@ -139,7 +139,7 @@ def upload_meas_data_beempao_minute_log(filename, plant_name):
     df_all["record_time"] = pd.to_datetime(df_all["record_time"], format='%d-%m-%Y %H:%M')
     df_all["record_time"] = df_all["record_time"].dt.tz_localize("Asia/Kolkata")
     df_all = df_all.resample('15min', on='record_time', label='right', closed='left').agg({
-        'active_power': 'sum',
+        'active_power': 'mean',
         'ghi': 'mean'
     }).reset_index()
     record_time_max = df_all["record_time"].max()
