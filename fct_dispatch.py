@@ -17,6 +17,9 @@ date_now = utils.get_last_15_min_slot()
 fct_start_time = date_now + timedelta(hours = 1, minutes = 30)
 fct_end_time = fct_start_time.replace(hour = 23, minute = 45)
 
+if fct_end_time.hour > 22:
+    fct_end_time = fct_start_time + timedelta(hours = 1, minutes = 30)
+
 FTP_HOST = config["fct_ftp_cred"]["host"]
 FTP_USER = config["fct_ftp_cred"]["user"]
 FTP_PASS = config["fct_ftp_cred"]["password"]
@@ -54,7 +57,7 @@ for _, idf in df_static.iterrows():
         print(f"Running ID for {idf['plant_name']}")
         farm_name = idf["plant_name"]
         fct_filename = f"../data_lake/re_insights/fct_dispatch/intraday_wind_{farm_name}_{date_now.strftime('%Y%m%d_%H%M')}.csv"
-        fct_data = db_con.get_fct_data(plant=farm_name, fct_src="inhouse", model_name="intraday_wind", \
+        fct_data = db_con.get_fct_data(plant=farm_name, fct_src="inhouse", model_name="intraday_wind_ifs", \
             start_date=fct_start_time.strftime("%Y-%m-%dT%H:%M:%S"), \
         end_date=fct_end_time.strftime("%Y-%m-%dT%H:%M:%S"))
         fct_data = fct_data.sort_values(by=["forecast_time", "prediction_time"], ascending=[True, False])
