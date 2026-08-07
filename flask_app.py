@@ -6,7 +6,7 @@ from pangres import upsert
 import yaml
 import os
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import quote as urlquote
 from sqlalchemy import create_engine
 import psycopg2
@@ -118,7 +118,7 @@ class DBcon:
 
     def logging(self, log_dict):
         if "logging_time" not in log_dict:
-            log_dict["logging_time"] = dt.now(timezone.utc)
+            log_dict["logging_time"] = datetime.now(timezone.utc)
         df_log = pd.DataFrame([log_dict])
         self.push_log_data(df_log)
 
