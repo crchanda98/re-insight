@@ -7,6 +7,12 @@ import utils
 from datetime import datetime as dt, timedelta
 from sqlalchemy import create_engine
 from urllib.parse import quote as urlquote
+import argparse
+
+parser = argparse.ArgumentParser(description="Pull NCM data")
+parser.add_argument("--lag_days", type=int, default=0, help="Number of lag days to process")
+args = parser.parse_args()
+lag_days = args.lag_days
 
 CONFIG_PATH = os.getenv("WEATHER_CONFIG", "reinsight_config.yml")
 with open(CONFIG_PATH, "r") as f:
@@ -18,7 +24,7 @@ date_now_ist = utils.get_last_15_min_slot()
 date_now_utc = date_now_ist - timedelta(hours = 5, minutes = 30)
 
 fct_end_time = date_now_utc + timedelta(hours = 6)
-fct_start_time = date_now_utc - timedelta(hours = 6)
+fct_start_time = date_now_utc - timedelta(hours = 6, days=lag_days)
 
 FTP_HOST = config["fct_ftp_cred"]["host"]
 FTP_USER = config["fct_ftp_cred"]["user"]
