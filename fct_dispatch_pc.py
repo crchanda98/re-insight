@@ -32,12 +32,12 @@ db_columns = config["db_columns"]
 db_con = utils.DBcon(con = engine, db_schema=db_columns)
 db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"FCT dispatch script started"})
 
-def push_fct_to_ftp(filename):
+def push_fct_to_ftp(filename, target_folder):
     base_name = os.path.basename(filename)
     try:
         with FTP(FTP_HOST) as ftp:
             ftp.login(user=FTP_USER, passwd=FTP_PASS)
-            ftp.cwd("/home/ftpuser/ftp/upload")
+            ftp.cwd(target_folder)
             with open(filename, "rb") as file:
                 ftp.storbinary(f"STOR {base_name}", file)
             db_con.logging({"script": SCRIPT_NAME, "log_type": "success", "message": f"FCT data pushed to FTP for {filename}"})
@@ -47,13 +47,20 @@ def push_fct_to_ftp(filename):
         db_con.logging({"script": SCRIPT_NAME, "log_type": "error", "message": f"FCT data push failed for {filename}: {e}"})
 
 df_static = db_con.get_static_data()
-df_static = df_static[df_static["plant_id"].isin([1, 2, 3])]
-models = ["intraday_wind", "intraday_wind_ifs", "intraday_wind_ts"]
+df_static = df_static[df_static["plant_id"].isin([1, 2, 3, 20])]
+models = ["intraday_wind", "intraday_wind_ifs", "intraday_wind_ts", "intraday_solar_rf"]
+
+ftp_dir_mapping = {1: "/home/ftpuser/ftp/upload/Wind/Vayu/Intra-Day",
+                    2: "/home/ftpuser/ftp/upload/Wind/Vayu/Intra-Day", 
+                    3: "/home/ftpuser/ftp/upload/Wind/Vayu/Intra-Day", 
+                    20: "/home/ftpuser/ftp/upload/Solar/Beempow/Intra-Day"
+                    }
 
 for _, idf in df_static.iterrows():
+    target_folder_ftp = ftp_dir_mapping[idf["plant_id"]]
     for imodel in models:
         try:
-            print(f"Running ID for {idf['plant_name']}, model {imodel}")
+            print(f"Running FTP push for {idf['plant_name']}, model {imodel}")
             plant_name = idf["plant_name"]
             fct_filename = f"../data_lake/re_insights/fct_dispatch/rifct_{plant_name}_{imodel}_{date_now.strftime('%Y%m%d_%H%M')}.csv"
             fct_data = db_con.get_fct_data(plant=plant_name, fct_src="inhouse", model_name=imodel, \
@@ -62,6 +69,7 @@ for _, idf in df_static.iterrows():
             if len(fct_data) == 0:
                 db_con.logging({"script": SCRIPT_NAME, "log_type": "error", "message": f"No data found for {plant_name}"})
                 continue
+
             fct_data = fct_data.sort_values(by=["forecast_time", "prediction_time"], ascending=[True, False])
             fct_data = fct_data.drop_duplicates(subset=["forecast_time"], keep = "first")
 
@@ -69,7 +77,7 @@ for _, idf in df_static.iterrows():
             fct_data = fct_data[["plant_name", "forecast_time", "active_power"]]
             fct_data.to_csv(fct_filename, index = False)
             db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"{len(fct_data)} records found for {plant_name}"})
-            push_fct_to_ftp(fct_filename)
+            push_fct_to_ftp(fct_filename, target_folder_ftp)
 
         except Exception as e:
             e = traceback.format_exc()
