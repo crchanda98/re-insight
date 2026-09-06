@@ -1,4 +1,6 @@
 import os
+import traceback
+from ftplib import FTP
 import pytz
 import yaml
 import numpy as np
@@ -8,6 +10,7 @@ import utils
 from datetime import datetime, timedelta
 from sqlalchemy import create_engine, text
 from urllib.parse import quote as urlquote
+import traceback
 
 # -------------------------------------------------------------------
 # 1. CONFIGURATION & SETUP
@@ -15,13 +18,9 @@ from urllib.parse import quote as urlquote
 CONFIG_PATH = os.getenv("WEATHER_CONFIG", "reinsight_config.yml")
 with open(CONFIG_PATH, "r") as f:
     CONFIG = yaml.safe_load(f)
+model_name = "da_rf"
 
 db_cred = CONFIG["db_cred"]
-# db_cred = CONFIG
-# engine = create_engine(
-#     f"postgresql://{db_cred['reinsight_db_config']['user_name']}:%s@{db_cred['reinsight_db_config']['user_ip']}:{db_cred['reinsight_db_config']['user_port']}/{db_cred['reinsight_db_config']['dbname']}"
-#     % urlquote(db_cred["reinsight_db_config"]["user_passwd"])
-# )
 
 engine = create_engine(
     f"postgresql://{db_cred['user_name']}:%s@{db_cred['user_ip']}:{db_cred['user_port']}/{db_cred['db_name']}"
@@ -32,19 +31,16 @@ db_columns = CONFIG["db_columns"]
 fct_table_column = db_columns["forecast_table"]["columns"]
 fct_table_column_un = db_columns["forecast_table"]["unique_constraint"]
 
-db_con = utils.DBcon(con = engine, db_schema=db_columns)
+db_con = utils.DBcon(con=engine, db_schema=db_columns)
 
 df_static = db_con.get_static_data()
 df_static = df_static[df_static["plant_id"].isin([1, 2, 3])]
 df_static = df_static.set_index("plant_id")
-# db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Intraday wind script started"})
 
-PLANT_CAPACITIES_KW = {
-    1: 48000,  # 48.0 MW
-    # 2: 25600,  # 25.6 MW
-    # 3: 10400,  # 10.4 MW
-}
-
+FTP_HOST = CONFIG["fct_ftp_cred"]["host"]
+FTP_USER = CONFIG["fct_ftp_cred"]["user"]
+FTP_PASS = CONFIG["fct_ftp_cred"]["password"]
+target_folder_ftp = "/home/ftpuser/ftp/upload/Wind/Vayu/Day-Ahead"
 
 ist_tz = pytz.timezone("Asia/Kolkata")
 now_ist = datetime.now(ist_tz)
@@ -54,6 +50,19 @@ tomorrow = today + timedelta(days=1)
 fetch_start_date = today - timedelta(days=35)
 fetch_start_str = fetch_start_date.strftime("%Y-%m-%d 00:00:00")
 fetch_end_str = tomorrow.strftime("%Y-%m-%d 23:59:59")
+
+
+def push_fct_to_ftp(filename, target_folder):
+    base_name = os.path.basename(filename)
+    try:
+        with FTP(FTP_HOST) as ftp:
+            ftp.login(user=FTP_USER, passwd=FTP_PASS)
+            ftp.cwd(target_folder)
+            with open(filename, "rb") as file:
+                ftp.storbinary(f"STOR {base_name}", file)
+    except Exception as e:
+        e = traceback.format_exc()
+        print(f"An error occurred: {e}")
 
 
 # -------------------------------------------------------------------
@@ -200,7 +209,7 @@ def create_day_ahead_lags(df):
 # -------------------------------------------------------------------
 # 4. TRAINING & PREDICTION
 # -------------------------------------------------------------------
-def generate_tomorrow_forecast(df, train_window_days=30):
+def generate_tomorrow_forecast(df, train_window_days=30, avc=None):
     features = [
         "wind_speed_ecmwf",
         "wind_dir_sin_ecmwf",
@@ -253,6 +262,8 @@ def generate_tomorrow_forecast(df, train_window_days=30):
 
     predictions = model.predict(test_df[features])
     test_df["predicted_power"] = predictions.clip(min=0)
+    if avc is not None:
+        test_df["predicted_power"] = test_df["predicted_power"].clip(upper=avc)
 
     test_df["actual_power"] = np.nan
 
@@ -269,7 +280,9 @@ if __name__ == "__main__":
     date_now = utils.get_last_15_min_slot()
     fct_start_time = date_now + timedelta(days=1)
 
-    for current_plant_id, current_avc in PLANT_CAPACITIES_KW.items():
+    for current_plant_id, idf in df_static.iterrows():
+        plant_name = idf["plant_name"]
+        avc = idf["avc"] * 1000
         print(f"Processing Plant ID: {current_plant_id}")
 
         # 1. Fetch
@@ -288,33 +301,37 @@ if __name__ == "__main__":
 
         # 4. Format Output
         df_tomorrow_forecast["plant_id"] = current_plant_id
+        df_tomorrow_forecast = df_tomorrow_forecast.drop(columns=["active_power"])
+        df_tomorrow_forecast = df_tomorrow_forecast.rename(
+            {"predicted_power": "active_power"}, axis=1
+        )
 
         cols_to_export = [
             "plant_id",
             "forecast_time",
-            "actual_power",
-            "predicted_power",
+            "active_power",
             "wind_speed_mean",
             "wind_speed_delta",
             "wind_dir_alignment",
         ]
-
+        df_tomorrow_forecast = df_tomorrow_forecast.round(2)
         all_plants_forecast.append(df_tomorrow_forecast[cols_to_export])
+        df_ftp = df_tomorrow_forecast[["forecast_time", "active_power"]]
+        fct_filename = f"../data_lake/re_insights/rel_time_fct/dayahead_wind_rf_{plant_name}_{model_name}_{fct_start_time.strftime('%Y%m%d')}.csv"
+        df_ftp.to_csv(fct_filename, index=False)
+        # push_fct_to_ftp(fct_filename, target_folder_ftp)
 
     df_fct = pd.concat(all_plants_forecast, ignore_index=True)
+    df_fct = df_fct.reset_index(drop=True)
 
     df_fct["prediction_time"] = date_now
     df_fct["prediction_time"] = df_fct["prediction_time"].dt.tz_localize("Asia/Kolkata")
     df_fct["forecast_source"] = "inhouse"
-    df_fct["model_name"] = "da_rf"
-    df_fct = df_fct.rename({"predicted_power": "active_power"}, axis = 1)
-    fct_filename = f"../data_lake/re_insights/rel_time_fct/dayahead_wind_rf_{fct_start_time.strftime('%Y%m%d')}.csv"
-    df_fct.to_csv(fct_filename, index=False)
-
+    df_fct["model_name"] = model_name
     df_all = pd.DataFrame(columns=fct_table_column)
     df_fct = pd.concat([df_all, df_fct], ignore_index=True)
-    df_fct = df_fct.dropna(how = "all")
     df_fct = df_fct[fct_table_column]
+    df_fct = df_fct.drop_duplicates(subset=fct_table_column_un, keep="last")
     df_fct = df_fct.set_index(fct_table_column_un)
     db_con.push_fct_data(df_fct)
-    print(f"✅ Forecast successfully generated and saved to {fct_filename}")
+    print(f"✅ Forecast successfully generated")
