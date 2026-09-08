@@ -16,6 +16,8 @@ from ftplib import FTP
 import json
 import re
 import ast
+from google.cloud import storage
+from google.cloud.exceptions import NotFound
 
 
 def push_fct_to_ftp(filename, FTP_HOST, FTP_USER, FTP_PASS):
@@ -537,6 +539,8 @@ def get_dsm_regulation(actual, forecast, avc_kw, regulation, ppa_rate=5.0):
         total_dsm_penalty_rs = (
             (slab2_energy * 0.50) + (slab3_energy * 1.00) + (slab4_energy * 1.50)
         )
+    else:
+        total_dsm_penalty_rs = np.zeros_like(actual_kwh)
 
     dsm_over_rs = np.where(actual_kwh > forecast_kwh, total_dsm_penalty_rs, 0.0)
     dsm_under_rs = np.where(actual_kwh < forecast_kwh, total_dsm_penalty_rs, 0.0)
@@ -815,3 +819,39 @@ def extract_ncm_ad(fname, dest, df_stn, zone):
     df_all = df_all[all_columns]
     df_all = df_all.dropna(how="all")
     return df_all
+
+
+class GCSManager:
+    """Helper class to manage uploads, downloads, and checks for a GCS bucket."""
+
+    def __init__(self, bucket_name: str):
+        self.bucket_name = bucket_name
+        self.client = storage.Client()
+        self.bucket = self.client.bucket(self.bucket_name)
+
+    def file_exists(self, blob_name: str) -> bool:
+        """Checks whether a specific file (blob) exists in the bucket."""
+        blob = self.bucket.blob(blob_name)
+        exists = blob.exists()
+        print(f"File 'gs://{self.bucket_name}/{blob_name}' exists: {exists}")
+        return exists
+
+    def upload(self, local_path: str, remote_blob_name: str) -> None:
+        """Uploads a local file to the bucket."""
+        blob = self.bucket.blob(remote_blob_name)
+        blob.upload_from_filename(local_path)
+        print(
+            f"Uploaded '{local_path}' -> 'gs://{self.bucket_name}/{remote_blob_name}'"
+        )
+
+    def download(self, remote_blob_name: str, local_path: str) -> None:
+        """Downloads a file from the bucket to a local destination."""
+        blob = self.bucket.blob(remote_blob_name)
+        try:
+            blob.download_to_filename(local_path)
+            print(
+                f"Downloaded 'gs://{self.bucket_name}/{remote_blob_name}' -> '{local_path}'"
+            )
+        except NotFound:
+            print(f"Error: 'gs://{self.bucket_name}/{remote_blob_name}' was not found.")
+            raise
