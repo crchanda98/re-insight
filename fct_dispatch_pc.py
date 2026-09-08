@@ -48,7 +48,7 @@ def push_fct_to_ftp(filename, target_folder):
 
 df_static = db_con.get_static_data()
 df_static = df_static[df_static["plant_id"].isin([1, 2, 3, 20])]
-models = ["intraday_wind", "intraday_wind_ifs", "intraday_wind_ts", "intraday_solar_rf"]
+models = ["intraday_wind", "intraday_wind_ifs", "intraday_wind_ts", "intraday_solar_rf", "intraday_solar_ts"]
 
 ftp_dir_mapping = {1: "/home/ftpuser/ftp/upload/Wind/Vayu/Intra-Day",
                     2: "/home/ftpuser/ftp/upload/Wind/Vayu/Intra-Day", 
