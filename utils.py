@@ -833,25 +833,18 @@ class GCSManager:
         """Checks whether a specific file (blob) exists in the bucket."""
         blob = self.bucket.blob(blob_name)
         exists = blob.exists()
-        print(f"File 'gs://{self.bucket_name}/{blob_name}' exists: {exists}")
         return exists
 
     def upload(self, local_path: str, remote_blob_name: str) -> None:
         """Uploads a local file to the bucket."""
         blob = self.bucket.blob(remote_blob_name)
         blob.upload_from_filename(local_path)
-        print(
-            f"Uploaded '{local_path}' -> 'gs://{self.bucket_name}/{remote_blob_name}'"
-        )
 
     def download(self, remote_blob_name: str, local_path: str) -> None:
         """Downloads a file from the bucket to a local destination."""
         blob = self.bucket.blob(remote_blob_name)
         try:
             blob.download_to_filename(local_path)
-            print(
-                f"Downloaded 'gs://{self.bucket_name}/{remote_blob_name}' -> '{local_path}'"
-            )
         except NotFound:
             print(f"Error: 'gs://{self.bucket_name}/{remote_blob_name}' was not found.")
             raise
