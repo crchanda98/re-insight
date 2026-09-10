@@ -319,7 +319,7 @@ if __name__ == "__main__":
         df_ftp = df_tomorrow_forecast[["forecast_time", "active_power"]]
         fct_filename = f"../data_lake/re_insights/rel_time_fct/dayahead_wind_rf_{plant_name}_{model_name}_{fct_start_time.strftime('%Y%m%d')}.csv"
         df_ftp.to_csv(fct_filename, index=False)
-        # push_fct_to_ftp(fct_filename, target_folder_ftp)
+        push_fct_to_ftp(fct_filename, target_folder_ftp)
 
     df_fct = pd.concat(all_plants_forecast, ignore_index=True)
     df_fct = df_fct.reset_index(drop=True)
