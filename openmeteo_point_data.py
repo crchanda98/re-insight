@@ -1,3 +1,7 @@
+from pytz import tzinfo
+from pytz import tzinfo
+from pytz import tzinfo
+from pytz import tzinfo
 import traceback
 import requests
 from typing import List, Dict, Any
@@ -15,8 +19,13 @@ import numpy as np
 CONFIG_PATH = os.getenv("WEATHER_CONFIG", "reinsight_config.yml")
 with open(CONFIG_PATH, "r") as f:
     config = yaml.safe_load(f)
+GCS_FLAG = config["push_gcs"]
 
-gcs_utils = utils.GCSManager(bucket_name="re-insight-dev")
+gcs_utils = ""
+
+if GCS_FLAG:
+    gcs_utils = utils.GCSManager(bucket_name="re-insight-dev")
+
 GCS_PATH = "nwp/openmeteo"
 
 db_columns = config["db_columns"]
@@ -200,7 +209,7 @@ if __name__ == "__main__":
                 continue
             try:
                 forecast_data = get_live_forecast(
-                    lats, lons, model=model, forecast_days=1
+                    lats, lons, model=model, forecast_days=2
                 )
             except Exception as e:
                 db_con.logging(
@@ -326,7 +335,8 @@ if __name__ == "__main__":
                 f"{prediction_time.strftime('%Y%m%d_%H%M%S')}_{model}_fct.csv",
             )
             df_target.to_csv(data_filepath)
-            gcs_utils.upload(data_filepath, gcs_path)
+            if GCS_FLAG:
+                gcs_utils.upload(data_filepath, gcs_path)
             df_manifest.loc[prediction_time_str, model] = 1
             db_con.logging(
                 {

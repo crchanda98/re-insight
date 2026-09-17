@@ -20,8 +20,11 @@ SCRIPT_NAME = os.path.basename(__file__)
 with open(CONFIG_PATH, "r") as f:
     CONFIG = yaml.safe_load(f)
 EXTRACT_FROM_EXIST_DATA = True
+GCS_FLAG = CONFIG["push_gcs"]
 
-gcs_utils = utils.GCSManager(bucket_name="re-insight-dev")
+if GCS_FLAG:
+    gcs_utils = utils.GCSManager(bucket_name="re-insight-dev")
+
 GCS_PATH = "nwp/ncmrwf_ad"
 
 username = CONFIG["ncm_ad_user"]
@@ -212,7 +215,8 @@ for idate in dates_str:
                             dest_path = Path(ncm_temp_data)
                             for nc_file in dest_path.glob("*.nc"):
                                 nc_file.unlink()
-                            gcs_utils.upload(zip_path, gcs_path)
+                            if GCS_FLAG:
+                                gcs_utils.upload(zip_path, gcs_path)
                         else:
                             print(f"File issue for {model_name}, {date_name}")
                     else:
