@@ -490,15 +490,7 @@ def logging_page():
     with r1_col1:
         selected_script = st.selectbox(
             "Select Script",
-            options=[
-                "aggregator.py",
-                "da_wind.py",
-                "fct_dispatch.py",
-                "intraday_wind_om_rf.py",
-                "intraday_wind_v2.py",
-                "ncm_data_pull.py",
-                "pull_schedule.py",
-            ],
+            options=CONFIG["dashboard"]["scripts"],
         )
     with r1_col2:
         start_date = st.date_input(
