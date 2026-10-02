@@ -164,7 +164,7 @@ for idate in dates_str:
                         df_stn=df_static,
                     )
                     df_out.to_csv(
-                        os.path.join(csv_path, f"{idate}_{"ncm_sat"}.csv"),
+                        os.path.join(csv_path, f"{idate}_ncm_sat.csv"),
                         index=False,
                     )
                     df_db = pd.DataFrame(columns=db_columns["weather_table"]["columns"])
