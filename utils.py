@@ -821,6 +821,47 @@ def extract_ncm_ad(fname, dest, df_stn, zone):
     return df_all
 
 
+def process_ncm_sat(fname, df_stn):
+    all_columns = [
+        "plant_id",
+        "prediction_time",
+        "forecast_time",
+        "height",
+        "model_name",
+        "wind_speed",
+        "wind_direction",
+        "ghi",
+        "humidity",
+        "temperature",
+        "precipitation",
+    ]
+    df_all = pd.DataFrame(columns=all_columns)
+
+    ds = xr.open_dataset(fname)
+
+    df_nwp = []
+    for _, idf in df_stn.iterrows():
+        lat = idf["latitude"]
+        lon = idf["longitude"]
+        plant_id = idf["plant_id"]
+        df_temp = ds.sel(lat=lat, lon=lon, method="nearest").to_dataframe()
+        df_temp = df_temp.reset_index()
+        df_temp["plant_id"] = plant_id
+        df_nwp.append(df_temp)
+    df_nwp = pd.concat(df_nwp)
+    df_nwp["time"] = df_nwp["time"].dt.tz_localize("UTC")
+    df_nwp = df_nwp.rename(
+        columns={"GHI_probabilistic_advection": "ghi", "time": "forecast_time"}
+    )
+    df_nwp["prediction_time"] = df_nwp["forecast_time"].min()
+    df_nwp["model_name"] = "ncm_sat"
+    df_nwp["height"] = 0
+    df_all = pd.concat([df_all, df_nwp])
+    df_all = df_all[all_columns]
+    df_all = df_all.dropna(how="all")
+    return df_all
+
+
 class GCSManager:
     """Helper class to manage uploads, downloads, and checks for a GCS bucket."""
 
