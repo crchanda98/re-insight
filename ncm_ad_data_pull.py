@@ -217,6 +217,7 @@ for idate in dates_str:
                                 nc_file.unlink()
                             if GCS_FLAG:
                                 gcs_utils.upload(zip_path, gcs_path)
+                            os.remove(zip_path)
                         else:
                             print(f"File issue for {model_name}, {date_name}")
                     else:
