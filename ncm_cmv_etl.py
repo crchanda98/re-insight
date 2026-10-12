@@ -140,10 +140,10 @@ for idate in dates_str:
 
                 print("Filename from response:", filename)
                 if response.status_code == 200:
-                    fileDownloadPath = os.path.join(model_data, "ncm_sat", idate_str)
+                    fileDownloadPath = os.path.join(model_data, "ncm_sat")
                     os.makedirs(fileDownloadPath, exist_ok=True)
                     nc_path = os.path.join(fileDownloadPath, filename)
-                    gcs_path = os.path.join(GCS_PATH, "ncm_sat", idate_str, filename)
+                    gcs_path = os.path.join(GCS_PATH, "ncm_sat", filename)
                     print("Filename is:", filename)
                     total_size = int(response.headers.get("content-length", 0))
                     with open(nc_path, "wb") as f, tqdm(
@@ -180,7 +180,7 @@ for idate in dates_str:
                         }
                     )
                     df_manifest.loc[idate_str, "ncm_sat"] = 1
-
+                    os.remove(nc_path)
                 else:
                     print(
                         f"Failed to download file: {response.status_code} - {response.text}"
