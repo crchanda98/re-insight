@@ -117,7 +117,7 @@ def fetch_and_merge_training_data(engine, plant_id, start_date, end_date):
         )
 
     df_ecmwf = fetch_weather_model("ecmwf_ifs", "ecmwf")
-    df_ncm = fetch_weather_model("ncm_d2", "ncm")
+    df_ncm = fetch_weather_model("ncm_g", "ncm")
 
     df_weather_combined = pd.merge(df_ecmwf, df_ncm, on="forecast_time", how="outer")
     df_merged = pd.merge(
