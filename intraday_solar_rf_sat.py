@@ -2,6 +2,7 @@ import pandas as pd
 import yaml
 import os
 import traceback
+from pvlib.location import Location
 import utils
 from datetime import datetime as dt, timedelta
 from urllib.parse import quote as urlquote
@@ -24,7 +25,7 @@ FTP_PASS = config["fct_ftp_cred"]["password"]
 MODEL_NAME = "intraday_solar_rf_sat"
 LOGGING = True
 
-date_now = utils.get_last_15_min_slot() - timedelta(hours=5, minutes=30)
+date_now = utils.get_last_15_min_slot()
 date_now = date_now - timedelta(hours=5, minutes=30)
 
 
@@ -105,6 +106,25 @@ for _, idf in df_static.iterrows():
         plant_name = idf["plant_name"]
         avc = idf["avc"] * 1000
         df_static_plant = df_static[df_static["plant_name"] == plant_name].iloc[0]
+
+        latitude = idf["latitude"]
+        longitude = idf["longitude"]
+        tz = "UTC"
+        altitude = 70
+
+        site = Location(latitude, longitude, tz=tz, altitude=altitude)
+
+        # 3. Create a localized pandas DatetimeIndex for your time window
+        times = pd.date_range(
+            start=fct_start_time, end=fct_end_time, freq="15min", tz=site.tz
+        )
+
+        # 4. Calculate clear sky irradiance
+        # By default, this uses the 'ineichen' model with integrated climatology tables
+        clearsky_df = site.get_clearsky(times)
+        clearsky_df.index.name = "record_time"
+        clearsky_df = clearsky_df.reset_index()
+        clearsky_df = clearsky_df.rename(columns={"ghi": "ghi_cs"})
 
         ### Fetching training data
         meas_data = db_con.get_meas_data(
@@ -225,7 +245,7 @@ for _, idf in df_static.iterrows():
         meas_data_cs = get_clear_sky(df_model[["active_power"]].dropna())
 
         df_model = df_model.asfreq("15min")
-
+        df_fct_sat = pd.DataFrame()
         if date_now.hour >= 4:
             df_train = df_model.loc[
                 train_start_time.strftime(
@@ -274,6 +294,14 @@ for _, idf in df_static.iterrows():
         df_fct_no_sat["model_name"] = "intraday_linreg_no_sat"
 
         df_fct = pd.concat([df_fct_sat, df_fct_no_sat], ignore_index=True)
+        df_fct = df_fct.merge(
+            clearsky_df[["record_time", "ghi_cs"]], on="record_time", how="left"
+        )
+        df_fct.loc[df_fct["ghi_cs"] == 0, "active_power"] = 0
+        df_fct.to_csv(
+            f"{fct_dir}/intraday_solar_raw_data_{MODEL_NAME}_{plant_name}_{date_now.strftime('%Y%m%d_%H%M')}.csv",
+            index=False,
+        )
         df_fct = df_fct.set_index("record_time")
         df_fct = df_fct.dropna(subset="active_power")
         df_fct["day_hour"] = df_fct.index.hour * 100 + df_fct.index.minute
@@ -317,7 +345,7 @@ for _, idf in df_static.iterrows():
         df_fct = df_fct.dropna(how="all")
         df_fct = df_fct[fct_table_column]
         df_fct = df_fct.set_index(fct_table_column_un)
-        # db_con.push_fct_data(df_fct)
+        db_con.push_fct_data(df_fct)
         if LOGGING:
             db_con.logging(
                 {
