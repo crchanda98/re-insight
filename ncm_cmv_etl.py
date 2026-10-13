@@ -79,7 +79,7 @@ time_now = time_now - timedelta(
 )
 date_end = time_now
 date_start = date_end - timedelta(hours=lag_hours)
-dates_str = pd.date_range(start=date_start, end=date_end, freq="15min")
+dates_str = pd.date_range(end=date_start, start=date_end, freq="-15min")
 
 MODEL_MANIFEST = os.path.join(root_path, "ncm_sat.csv")
 
@@ -98,7 +98,7 @@ url = "https://pdscloud.ncmrwf.gov.in:8443/api/v1/REdownload"
 files = [
     {"url": url, "variable": "satimage_data"},
 ]
-
+assert False
 for idate in dates_str:
     try:
         inputdate = idate.strftime("%Y%m%d")
