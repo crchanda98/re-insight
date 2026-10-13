@@ -52,9 +52,11 @@ def proc_nwp_ghi(df_d, height):
     return df_n
 
 
-def get_clear_sky(idf):
-    idf["day_hour"] = idf.index.hour * 100 + idf.index.minute
-    idf_cs = idf.groupby("day_hour")[["active_power"]].max()
+def get_clear_sky(dfi, index_col=None):
+    if index_col is not None:
+        dfi = dfi.set_index(index_col)
+    dfi["day_hour"] = dfi.index.hour * 100 + dfi.index.minute
+    idf_cs = dfi.groupby("day_hour")[["active_power"]].max()
     idf_cs = idf_cs.reset_index()
     idf_cs = idf_cs.rename({"active_power": "active_power_cs"}, axis=1)
     idf_cs = idf_cs[["day_hour", "active_power_cs"]]
@@ -172,7 +174,6 @@ for _, idf in df_static.iterrows():
                 df_nwp = df_nwp_i
             else:
                 df_nwp = pd.merge(df_nwp, df_nwp_i, on="forecast_time", how="left")
-            # meas_data_cs = get_clear_sky(df_model[["active_power"]].dropna())
 
         nwp_data = db_con.get_weather_data(
             plant=plant_name,
@@ -253,7 +254,9 @@ for _, idf in df_static.iterrows():
             print(f"Laltest CMV not available. Lag is {cmv_lag}")
 
         df_model = pd.merge(meas_data, df_nwp, on="record_time", how="outer")
-        meas_data_cs = get_clear_sky(df_model[["active_power"]].dropna())
+        meas_data_cs = get_clear_sky(
+            df_model[["record_time", "active_power"]].dropna(), index_col="record_time"
+        )
 
         if date_now.hour >= 4 and len(df_sat_nwcst) > 0:
             df_sat_nwcst = proc_nwp_ghi(df_sat_nwcst, height=0)
