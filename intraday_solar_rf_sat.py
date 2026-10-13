@@ -358,9 +358,7 @@ for _, idf in df_static.iterrows():
         df_fct = df_fct.round(2)
         df_fct["forecast_time"] = df_fct["forecast_time"].dt.tz_convert("Asia/Kolkata")
         df_fct["prediction_time"] = date_now
-        df_fct["prediction_time"] = df_fct["prediction_time"].dt.tz_localize(
-            "Asia/Kolkata"
-        )
+        df_fct["prediction_time"] = df_fct["prediction_time"].dt.tz_localize("UTC")
         df_fct["forecast_source"] = "inhouse"
         df_fct.to_csv(
             f"{fct_dir}/intraday_solar_{MODEL_NAME}_{plant_name}_{date_now.strftime('%Y%m%d_%H%M')}.csv",
