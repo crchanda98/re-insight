@@ -28,6 +28,7 @@ LOGGING = True
 
 date_now = utils.get_last_15_min_slot()
 date_now = date_now - timedelta(hours=5, minutes=30)
+date_now_tz = pd.Timestamp.now(tz="UTC")
 
 
 def push_fct_to_ftp(filename):
@@ -171,6 +172,7 @@ for _, idf in df_static.iterrows():
                 df_nwp = df_nwp_i
             else:
                 df_nwp = pd.merge(df_nwp, df_nwp_i, on="forecast_time", how="left")
+            # meas_data_cs = get_clear_sky(df_model[["active_power"]].dropna())
 
         nwp_data = db_con.get_weather_data(
             plant=plant_name,
@@ -214,6 +216,7 @@ for _, idf in df_static.iterrows():
         cmv_fct_lag = cmv_forecast_time.tz_convert(None).to_pydatetime() - date_now
         cmv_lag = cmv_lag.total_seconds() / 60
         cmv_fct_lag = cmv_fct_lag.total_seconds() / 60
+        total_block_diff = cmv_lag / 15 + 8
         if LOGGING:
             db_con.logging(
                 {
@@ -230,24 +233,42 @@ for _, idf in df_static.iterrows():
         df_sat_monitor = df_sat_monitor.reset_index()
         df_sat_monitor = df_sat_monitor.rename({"forecast_time": "record_time"}, axis=1)
 
-        df_sat_nwcst = cmv_data[cmv_data["block"] == 8]  # Keep only blocks 1 to 8
-        df_sat_nwcst = proc_nwp_ghi(df_sat_nwcst, height=0)
-        df_sat_nwcst = df_sat_nwcst.add_suffix("_" + "ncm_sat_nwcst")
-        df_sat_nwcst = df_sat_nwcst.reset_index()
-        df_sat_nwcst = df_sat_nwcst.rename({"forecast_time": "record_time"}, axis=1)
+        df_sat_nwcst = cmv_data[
+            cmv_data["block"] == total_block_diff
+        ]  # Keep only blocks 1 to 8
+        df_fct_sat = pd.DataFrame()
 
-        df_nwp = pd.merge(df_nwp, df_sat_nwcst, on="record_time", how="left")
+        df_sat_nwcst_all = cmv_data[cmv_data["forecast_time"] > date_now_tz]
 
-        EXOGEN_VAR_SAT = [col for col in df_nwp.columns if "ghi" in col]
+        df_sat_nwcst_all = pd.concat([df_sat_nwcst_all, df_fct_sat])
+        df_sat_nwcst_all = df_sat_nwcst_all.sort_values(by=["forecast_time", "block"])
+        df_sat_nwcst_all = df_sat_nwcst_all.drop_duplicates(
+            subset="forecast_time", keep="first"
+        )
+        df_sat_nwcst_all = df_sat_nwcst_all.rename(
+            {"forecast_time": "record_time"}, axis=1
+        )
+
+        if len(df_sat_nwcst) == 0:
+            print(f"Laltest CMV not available. Lag is {cmv_lag}")
 
         df_model = pd.merge(meas_data, df_nwp, on="record_time", how="outer")
-
-        df_model = df_model.set_index("record_time")
         meas_data_cs = get_clear_sky(df_model[["active_power"]].dropna())
 
-        df_model = df_model.asfreq("15min")
-        df_fct_sat = pd.DataFrame()
-        if date_now.hour >= 4:
+        if date_now.hour >= 4 and len(df_sat_nwcst) > 0:
+            df_sat_nwcst = proc_nwp_ghi(df_sat_nwcst, height=0)
+            df_sat_nwcst = df_sat_nwcst.add_suffix("_" + "ncm_sat_nwcst")
+            df_sat_nwcst = df_sat_nwcst.reset_index()
+            df_sat_nwcst = df_sat_nwcst.rename({"forecast_time": "record_time"}, axis=1)
+
+            EXOGEN_VAR_SAT = [col for col in df_nwp.columns if "ghi" in col]
+
+            df_model = pd.merge(meas_data, df_nwp, on="record_time", how="outer")
+
+            df_model = df_model.set_index("record_time")
+
+            df_model = df_model.asfreq("15min")
+
             df_train = df_model.loc[
                 train_start_time.strftime(
                     "%Y-%m-%dT%H:%M:%S"
@@ -274,6 +295,7 @@ for _, idf in df_static.iterrows():
                 df_fct_sat["model_name"] = "intraday_linreg_sat"
             else:
                 print("No forecast data")
+
         # #### CREATE DEFAULT FORECAST WITHOUT SATELLITE
         df_train = df_model.loc[
             train_start_time.strftime("%Y-%m-%dT%H:%M:%S") : train_end_time.strftime(
