@@ -321,7 +321,18 @@ for _, idf in df_static.iterrows():
         df_fct_no_sat = df_fct_no_sat.reset_index()
         df_fct_no_sat["model_name"] = "intraday_linreg_no_sat"
 
-        df_fct = pd.concat([df_fct_sat, df_fct_no_sat], ignore_index=True)
+        df_fct_comb = pd.concat([df_fct_sat, df_fct_no_sat], ignore_index=True)
+        df_fct_comb = df_fct_comb.drop_duplicates(subset="record_time", keep="first")
+        df_fct_comb["model_name"] = "intraday_sat_nwp_combo"
+
+        df_fct = pd.concat(
+            [
+                df_fct_sat,
+                df_fct_no_sat,
+                df_fct_comb,
+            ],
+            ignore_index=True,
+        )
         df_fct = df_fct.merge(
             clearsky_df[["record_time", "ghi_cs"]], on="record_time", how="left"
         )
