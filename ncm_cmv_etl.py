@@ -98,7 +98,7 @@ url = "https://pdscloud.ncmrwf.gov.in:8443/api/v1/REdownload"
 files = [
     {"url": url, "variable": "satimage_data"},
 ]
-assert False
+
 for idate in dates_str:
     try:
         inputdate = idate.strftime("%Y%m%d")
