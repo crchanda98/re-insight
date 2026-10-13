@@ -10,6 +10,7 @@ from sqlalchemy import create_engine
 from ftplib import FTP
 from sklearn.ensemble import RandomForestRegressor
 import warnings
+from sklearn.linear_model import LinearRegression
 
 warnings.filterwarnings("ignore")
 
@@ -252,6 +253,8 @@ for _, idf in df_static.iterrows():
                     "%Y-%m-%dT%H:%M:%S"
                 ) : train_end_time.strftime("%Y-%m-%dT%H:%M:%S")
             ]
+            df_train = df_train[df_train.index.hour >= 4]
+            df_train = df_train.dropna()
 
             df_fct_sat_master = df_model.loc[
                 fct_start_time.strftime(
@@ -263,7 +266,7 @@ for _, idf in df_static.iterrows():
 
             if len(df_fct_sat) > 0:
                 df_train = df_train.dropna(subset="active_power")
-                model = RandomForestRegressor()
+                model = LinearRegression()
                 model.fit(df_train[EXOGEN_VAR_SAT], df_train["active_power"])
                 pred = model.predict(df_fct_sat[EXOGEN_VAR_SAT])
                 df_fct_sat["active_power"] = pred
@@ -271,7 +274,7 @@ for _, idf in df_static.iterrows():
                 df_fct_sat["model_name"] = "intraday_linreg_sat"
             else:
                 print("No forecast data")
-        #### CREATE DEFAULT FORECAST WITHOUT SATELLITE
+        # #### CREATE DEFAULT FORECAST WITHOUT SATELLITE
         df_train = df_model.loc[
             train_start_time.strftime("%Y-%m-%dT%H:%M:%S") : train_end_time.strftime(
                 "%Y-%m-%dT%H:%M:%S"
@@ -284,9 +287,9 @@ for _, idf in df_static.iterrows():
         ]
 
         df_fct_no_sat = df_fct_no_sat.dropna(subset=EXOGEN_VAR_NO_SAT)
-        df_train = df_train.dropna(subset="active_power")
+        df_train = df_train.dropna()
 
-        model = RandomForestRegressor()
+        model = LinearRegression()
         model.fit(df_train[EXOGEN_VAR_NO_SAT], df_train["active_power"])
         pred = model.predict(df_fct_no_sat[EXOGEN_VAR_NO_SAT])
         df_fct_no_sat["active_power"] = pred
@@ -328,7 +331,6 @@ for _, idf in df_static.iterrows():
         ]
         df_fct = df_fct.rename({"record_time": "forecast_time"}, axis=1)
         df_fct = df_fct.round(2)
-        df_fct["active_power"] = df_fct["active_power"].clip(lower=0, upper=avc * 0.85)
         df_fct["forecast_time"] = df_fct["forecast_time"].dt.tz_convert("Asia/Kolkata")
         df_fct["prediction_time"] = date_now
         df_fct["prediction_time"] = df_fct["prediction_time"].dt.tz_localize(
