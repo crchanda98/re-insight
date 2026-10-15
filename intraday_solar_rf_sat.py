@@ -27,6 +27,7 @@ MODEL_NAME = "intraday_solar_rf_sat"
 LOGGING = True
 
 date_now = utils.get_last_15_min_slot()
+print(f"Code started at {dt.now()}")
 date_now = date_now - timedelta(hours=5, minutes=30)
 date_now_tz = pd.Timestamp.now(tz="UTC")
 
@@ -258,7 +259,7 @@ for _, idf in df_static.iterrows():
             df_model[["record_time", "active_power"]].dropna(), index_col="record_time"
         )
 
-        if date_now.hour >= 4 and len(df_sat_nwcst) > 0:
+        if date_now.hour >= 2 and len(df_sat_nwcst) > 0:
             df_sat_nwcst = proc_nwp_ghi(df_sat_nwcst, height=0)
             df_sat_nwcst = df_sat_nwcst.add_suffix("_" + "ncm_sat_nwcst")
             df_sat_nwcst = df_sat_nwcst.reset_index()
@@ -407,6 +408,7 @@ if LOGGING:
         {
             "script": SCRIPT_NAME,
             "log_type": "info",
-            "message": f"Intraday wind script completed",
+            "message": f"Intraday solar CMV script completed",
         }
     )
+print(f"Code ccompleted at {dt.now()}")
