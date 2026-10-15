@@ -226,7 +226,6 @@ for _, idf in df_static.iterrows():
         df_fct = df_fct[["record_time", "active_power", "plant_name", "plant_id"]]
         df_fct = df_fct.rename({"record_time": "forecast_time"}, axis=1)
         df_fct = df_fct.round(2)
-        df_fct["active_power"] = df_fct["active_power"].clip(lower=0, upper=avc * 0.85)
         df_fct["forecast_time"] = df_fct["forecast_time"].dt.tz_localize("Asia/Kolkata")
         df_fct["prediction_time"] = date_now
         df_fct["prediction_time"] = df_fct["prediction_time"].dt.tz_localize(
