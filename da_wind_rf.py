@@ -85,7 +85,7 @@ def fetch_and_merge_training_data(engine, plant_id, start_date, end_date):
     df_meas["record_time"] = pd.to_datetime(df_meas["record_time"])
 
     # Helper for weather
-    def fetch_weather_model(model_name, prefix):
+    def fetch_weather_model(imodel, prefix):
         weather_query = text("""
             SELECT DISTINCT ON (forecast_time) 
                 forecast_time, wind_speed, wind_direction
@@ -102,7 +102,7 @@ def fetch_and_merge_training_data(engine, plant_id, start_date, end_date):
             engine,
             params={
                 "plant_id": plant_id,
-                "model_name": model_name,
+                "model_name": imodel,
                 "start_date": start_date,
                 "end_date": end_date,
             },
@@ -117,7 +117,7 @@ def fetch_and_merge_training_data(engine, plant_id, start_date, end_date):
         )
 
     df_ecmwf = fetch_weather_model("ecmwf_ifs", "ecmwf")
-    df_ncm = fetch_weather_model("ncm_g", "ncm")
+    df_ncm = fetch_weather_model("ncum_g", "ncm")
 
     df_weather_combined = pd.merge(df_ecmwf, df_ncm, on="forecast_time", how="outer")
     df_merged = pd.merge(
