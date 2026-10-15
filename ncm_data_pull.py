@@ -15,6 +15,13 @@ SCRIPT_NAME = os.path.basename(__file__)
 with open(CONFIG_PATH, "r") as f:
     config = yaml.safe_load(f)
 
+GCS_FLAG = config["push_gcs"]
+GCS_PATH = "nwp/ncmrwf_ad"
+model_name = "ncm_d2"
+
+if GCS_FLAG:
+    gcs_utils = utils.GCSManager(bucket_name="re-insight-dev")
+
 db_cred = config["db_cred"]
 
 engine = create_engine(
@@ -23,22 +30,24 @@ engine = create_engine(
 )
 db_columns = config["db_columns"]
 
-db_con = utils.DBcon(con = engine, db_schema=db_columns)
+db_con = utils.DBcon(con=engine, db_schema=db_columns)
 df_static = db_con.get_static_data()
 df_static = df_static[df_static["parent_id"] != 0]
 
-db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"NCM data script started"})
+db_con.logging(
+    {"script": SCRIPT_NAME, "log_type": "info", "message": f"NCM data script started"}
+)
 
 username = config["ncm_user"]
 password = config["ncm_password"]
-base_url=config["base_url"]
-data_func = utils.APICon(base_url = base_url)
+base_url = config["base_url"]
+data_func = utils.APICon(base_url=base_url)
 
 url = "https://pdscloud.ncmrwf.gov.in:8443/api/v1/REdownload"
 temp_dir = os.path.join(config["temp_dir"], "ncm_data")
 
 csv_path = config["ncm_csv_data"]
-ncm_temp_data= config["ncm_temp_data"]
+ncm_temp_data = config["ncm_temp_data"]
 
 tele_cred = config["telegram_cred"]
 tel_bot = utils.SendTeleMsg()
@@ -59,7 +68,9 @@ if os.path.exists(config["ncm_data_log"]):
         manifest = manifest.split("\n")
 
 parser = argparse.ArgumentParser(description="Pull NCM data")
-parser.add_argument("--lag_days", type=int, default=2, help="Number of lag days to process")
+parser.add_argument(
+    "--lag_days", type=int, default=2, help="Number of lag days to process"
+)
 args = parser.parse_args()
 
 lag_days = args.lag_days
@@ -73,40 +84,77 @@ dates_str = [
 dates_str = [x.strftime("%Y%m%d") for x in dates_str]
 cycle = ["00", "06", "12", "18"]
 
+dates_str.reverse()
+cycle.reverse()
+
 for idate in dates_str:
     print(f"Processing date: {idate}")
     for icycle in cycle:
         date_name = idate + icycle
         if date_name in manifest:
             print(f"Data for date {date_name} already processed. Skipping...")
-            db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Data for {date_name} already processed"})
+            db_con.logging(
+                {
+                    "script": SCRIPT_NAME,
+                    "log_type": "info",
+                    "message": f"Data for {date_name} already processed",
+                }
+            )
             continue
         else:
             print(f"Downloading data for date {date_name}")
             filename = utils.download_ncm_data(idate, icycle, temp_dir)
             if filename == "":
                 print(f"Failed to download data for date {date_name}. Skipping...")
-                db_con.logging({"script": SCRIPT_NAME, "log_type": "error", "message": f"Failed to download data for {date_name}"})
+                db_con.logging(
+                    {
+                        "script": SCRIPT_NAME,
+                        "log_type": "error",
+                        "message": f"Failed to download data for {date_name}",
+                    }
+                )
                 continue
             else:
                 file_path = os.path.join(temp_dir, filename)
+                gcs_path = os.path.join(GCS_PATH, model_name, idate, filename)
                 df_ncm = utils.extract_ncm(
                     fname=file_path, dest=ncm_temp_data, df_stn=df_static
                 )
+                if GCS_FLAG:
+                    gcs_utils.upload(file_path, gcs_path)
+                os.remove(file_path)
                 csv_file_path = os.path.join(csv_path, f"ncm_{date_name}.csv")
                 msg = f"Data for date {date_name} downloaded successfully"
                 tel_bot.send_text(msg)
                 df_ncm.to_csv(csv_file_path, index=False)
-                df_ncm['prediction_time'] = pd.to_datetime(df_ncm['prediction_time'])
-                df_ncm['forecast_time'] = pd.to_datetime(df_ncm['forecast_time'])
-                df_ncm['prediction_time'] = df_ncm['prediction_time'].dt.tz_localize('UTC')
-                df_ncm['forecast_time'] = df_ncm['forecast_time'].dt.tz_localize('UTC')
-                df_ncm = df_ncm.set_index(db_columns["weather_table"]["unique_constraint"])
+                df_ncm["prediction_time"] = pd.to_datetime(df_ncm["prediction_time"])
+                df_ncm["forecast_time"] = pd.to_datetime(df_ncm["forecast_time"])
+                df_ncm["prediction_time"] = df_ncm["prediction_time"].dt.tz_localize(
+                    "UTC"
+                )
+                df_ncm["forecast_time"] = df_ncm["forecast_time"].dt.tz_localize("UTC")
+                df_ncm = df_ncm.set_index(
+                    db_columns["weather_table"]["unique_constraint"]
+                )
                 db_con.push_weather_data(df_ncm)
-                db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"{len(df_ncm)} records pushed to weather table"})
-                db_con.logging({"script": SCRIPT_NAME, "log_type": "success", "message": f"Data for {date_name} downloaded and pushed successfully"})
+                db_con.logging(
+                    {
+                        "script": SCRIPT_NAME,
+                        "log_type": "info",
+                        "message": f"{len(df_ncm)} records pushed to weather table",
+                    }
+                )
+                db_con.logging(
+                    {
+                        "script": SCRIPT_NAME,
+                        "log_type": "success",
+                        "message": f"Data for {date_name} downloaded and pushed successfully",
+                    }
+                )
                 manifest.append(date_name)
                 with open(config["ncm_data_log"], "w") as f:
                     f.write("\n".join(manifest))
 
-db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"NCM data script completed"})
+db_con.logging(
+    {"script": SCRIPT_NAME, "log_type": "info", "message": f"NCM data script completed"}
+)
