@@ -13,7 +13,8 @@ with open(CONFIG_PATH, "r") as f:
 
 SCRIPT_NAME = os.path.basename(__file__)
 
-date_now = utils.get_last_15_min_slot()
+date_now_ist = utils.get_last_15_min_slot()
+date_now = date_now_ist - timedelta(hours=5, minutes=30)
 fct_start_time = date_now + timedelta(hours=1, minutes=30)
 fct_end_time = fct_start_time.replace(hour=23, minute=45)
 
@@ -83,7 +84,7 @@ for _, idf in df_static.iterrows():
         try:
             print(f"Running FTP push for {idf['plant_name']}, model {imodel}")
             plant_name = idf["plant_name"]
-            fct_filename = f"../data_lake/re_insights/fct_dispatch/rifct_{plant_name}_{imodel}_{date_now.strftime('%Y%m%d_%H%M')}.csv"
+            fct_filename = f"../data_lake/re_insights/fct_dispatch/rifct_{plant_name}_{imodel}_{date_now_ist.strftime('%Y%m%d_%H%M')}.csv"
             fct_data = db_con.get_fct_data(
                 plant=plant_name,
                 fct_src="inhouse",
