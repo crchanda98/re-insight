@@ -228,7 +228,6 @@ for _, idf in df_static.iterrows():
                 }
             )
 
-        # cmv_data = cmv_data.set_index("forecast_time")
         df_sat_monitor = cmv_data[cmv_data["block"] == 0]  # Keep only blocks 1 to 8
         df_sat_monitor = proc_nwp_ghi(df_sat_monitor, height=0)
         df_sat_monitor = df_sat_monitor.add_suffix("_" + "ncm_sat_monitor")
@@ -238,17 +237,12 @@ for _, idf in df_static.iterrows():
         df_sat_nwcst = cmv_data[
             cmv_data["block"] == total_block_diff
         ]  # Keep only blocks 1 to 8
-        df_fct_sat = pd.DataFrame()
 
         df_sat_nwcst_all = cmv_data[cmv_data["forecast_time"] > date_now_tz]
+        df_sat_nwcst_all = pd.concat([df_sat_nwcst, df_sat_nwcst_all])
 
-        df_sat_nwcst_all = pd.concat([df_sat_nwcst_all, df_fct_sat])
-        df_sat_nwcst_all = df_sat_nwcst_all.sort_values(by=["forecast_time", "block"])
         df_sat_nwcst_all = df_sat_nwcst_all.drop_duplicates(
             subset="forecast_time", keep="first"
-        )
-        df_sat_nwcst_all = df_sat_nwcst_all.rename(
-            {"forecast_time": "record_time"}, axis=1
         )
 
         if len(df_sat_nwcst) == 0:
@@ -260,47 +254,55 @@ for _, idf in df_static.iterrows():
         )
 
         if date_now.hour >= 2 and len(df_sat_nwcst) > 0:
-            df_sat_nwcst = proc_nwp_ghi(df_sat_nwcst, height=0)
-            df_sat_nwcst = df_sat_nwcst.add_suffix("_" + "ncm_sat_nwcst")
-            df_sat_nwcst = df_sat_nwcst.reset_index()
-            df_sat_nwcst = df_sat_nwcst.rename({"forecast_time": "record_time"}, axis=1)
+            try:
+                df_sat_nwcst = proc_nwp_ghi(df_sat_nwcst_all, height=0)
+                df_sat_nwcst = df_sat_nwcst.add_suffix("_" + "ncm_sat_nwcst")
+                df_sat_nwcst = df_sat_nwcst.reset_index()
+                df_sat_nwcst = df_sat_nwcst.rename(
+                    {"forecast_time": "record_time"}, axis=1
+                )
 
-            EXOGEN_VAR_SAT = [col for col in df_nwp.columns if "ghi" in col]
+                df_model_sat = pd.merge(
+                    df_model, df_sat_nwcst, on="record_time", how="outer"
+                )
+                EXOGEN_VAR_SAT = [col for col in df_model_sat.columns if "ghi" in col]
 
-            df_model = pd.merge(meas_data, df_nwp, on="record_time", how="outer")
+                df_model_sat = df_model_sat.set_index("record_time")
 
-            df_model = df_model.set_index("record_time")
+                df_model_sat = df_model_sat.asfreq("15min")
 
-            df_model = df_model.asfreq("15min")
+                df_train = df_model_sat.loc[
+                    train_start_time.strftime(
+                        "%Y-%m-%dT%H:%M:%S"
+                    ) : train_end_time.strftime("%Y-%m-%dT%H:%M:%S")
+                ]
+                df_train = df_train[df_train.index.hour >= 4]
+                df_train = df_train.dropna()
 
-            df_train = df_model.loc[
-                train_start_time.strftime(
-                    "%Y-%m-%dT%H:%M:%S"
-                ) : train_end_time.strftime("%Y-%m-%dT%H:%M:%S")
-            ]
-            df_train = df_train[df_train.index.hour >= 4]
-            df_train = df_train.dropna()
+                df_fct_sat_master = df_model_sat.loc[
+                    fct_start_time.strftime(
+                        "%Y-%m-%dT%H:%M:%S"
+                    ) : cmv_forecast_time.strftime("%Y-%m-%dT%H:%M:%S")
+                ]
 
-            df_fct_sat_master = df_model.loc[
-                fct_start_time.strftime(
-                    "%Y-%m-%dT%H:%M:%S"
-                ) : cmv_forecast_time.strftime("%Y-%m-%dT%H:%M:%S")
-            ]
+                df_fct_sat = df_fct_sat_master.dropna(subset=EXOGEN_VAR_SAT)
 
-            df_fct_sat = df_fct_sat_master.dropna(subset=EXOGEN_VAR_SAT)
+                if len(df_fct_sat) > 0:
+                    df_train = df_train.dropna(subset="active_power")
+                    model = LinearRegression()
+                    model.fit(df_train[EXOGEN_VAR_SAT], df_train["active_power"])
+                    pred = model.predict(df_fct_sat[EXOGEN_VAR_SAT])
+                    df_fct_sat["active_power"] = pred
+                    df_fct_sat = df_fct_sat.reset_index()
+                    df_fct_sat["model_name"] = "intraday_linreg_sat"
+                else:
+                    print("No forecast data")
+            except Exception as e:
+                e = traceback.format_exc()
+                print(e)
 
-            if len(df_fct_sat) > 0:
-                df_train = df_train.dropna(subset="active_power")
-                model = LinearRegression()
-                model.fit(df_train[EXOGEN_VAR_SAT], df_train["active_power"])
-                pred = model.predict(df_fct_sat[EXOGEN_VAR_SAT])
-                df_fct_sat["active_power"] = pred
-                df_fct_sat = df_fct_sat.reset_index()
-                df_fct_sat["model_name"] = "intraday_linreg_sat"
-            else:
-                print("No forecast data")
-
-        # #### CREATE DEFAULT FORECAST WITHOUT SATELLITE
+        #### CREATE DEFAULT FORECAST WITHOUT SATELLITE
+        df_model = df_model.set_index("record_time")
         df_train = df_model.loc[
             train_start_time.strftime("%Y-%m-%dT%H:%M:%S") : train_end_time.strftime(
                 "%Y-%m-%dT%H:%M:%S"
