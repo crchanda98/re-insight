@@ -253,23 +253,21 @@ for _, idf in df_static.iterrows():
             df_model[["record_time", "active_power"]].dropna(), index_col="record_time"
         )
 
+        df_sat_nwcst = proc_nwp_ghi(df_sat_nwcst_all, height=0)
+        df_sat_nwcst = df_sat_nwcst.add_suffix("_" + "ncm_sat_nwcst")
+        df_sat_nwcst = df_sat_nwcst.reset_index()
+        df_sat_nwcst = df_sat_nwcst.rename({"forecast_time": "record_time"}, axis=1)
+
+        df_model_sat = pd.merge(df_model, df_sat_nwcst, on="record_time", how="outer")
+        EXOGEN_VAR_SAT = [col for col in df_model_sat.columns if "ghi" in col]
+
+        df_model_sat = df_model_sat.set_index("record_time")
+
+        df_model_sat = df_model_sat.asfreq("15min")
+        df_fct_sat = pd.DataFrame()
+
         if date_now.hour >= 2 and len(df_sat_nwcst) > 0:
             try:
-                df_sat_nwcst = proc_nwp_ghi(df_sat_nwcst_all, height=0)
-                df_sat_nwcst = df_sat_nwcst.add_suffix("_" + "ncm_sat_nwcst")
-                df_sat_nwcst = df_sat_nwcst.reset_index()
-                df_sat_nwcst = df_sat_nwcst.rename(
-                    {"forecast_time": "record_time"}, axis=1
-                )
-
-                df_model_sat = pd.merge(
-                    df_model, df_sat_nwcst, on="record_time", how="outer"
-                )
-                EXOGEN_VAR_SAT = [col for col in df_model_sat.columns if "ghi" in col]
-
-                df_model_sat = df_model_sat.set_index("record_time")
-
-                df_model_sat = df_model_sat.asfreq("15min")
 
                 df_train = df_model_sat.loc[
                     train_start_time.strftime(
@@ -384,7 +382,7 @@ for _, idf in df_static.iterrows():
         df_fct = df_fct.dropna(how="all")
         df_fct = df_fct[fct_table_column]
         df_fct = df_fct.set_index(fct_table_column_un)
-        db_con.push_fct_data(df_fct)
+        # db_con.push_fct_data(df_fct)
         if LOGGING:
             db_con.logging(
                 {
