@@ -382,7 +382,7 @@ for _, idf in df_static.iterrows():
         df_fct = df_fct.dropna(how="all")
         df_fct = df_fct[fct_table_column]
         df_fct = df_fct.set_index(fct_table_column_un)
-        # db_con.push_fct_data(df_fct)
+        db_con.push_fct_data(df_fct)
         if LOGGING:
             db_con.logging(
                 {
