@@ -400,16 +400,16 @@ if __name__ == "__main__":
     download_ftp_directory(
         LOCAL_DEST, project_name="Vayu", start=start_time, end=end_time
     )
-    pull_sekura_scada_data_minute_log(
+    pull_sekura_scada_data(
         ftp_cred=config["sekura_scada_ftp_cred"],
-        project_name="Agar",
+        project_name="Beempow",
         local_path=LOCAL_DEST,
         start=start_time,
         end=end_time,
     )
-    pull_sekura_scada_data(
+    pull_sekura_scada_data_minute_log(
         ftp_cred=config["sekura_scada_ftp_cred"],
-        project_name="Beempow",
+        project_name="Agar",
         local_path=LOCAL_DEST,
         start=start_time,
         end=end_time,
