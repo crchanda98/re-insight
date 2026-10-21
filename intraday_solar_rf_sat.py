@@ -198,6 +198,12 @@ for _, idf in df_static.iterrows():
         df_nwp_i = df_nwp_i.reset_index()
         df_nwp = pd.merge(df_nwp, df_nwp_i, on="forecast_time", how="left")
         df_nwp = df_nwp.rename({"forecast_time": "record_time"}, axis=1)
+
+        df_model = pd.merge(meas_data, df_nwp, on="record_time", how="outer")
+        meas_data_cs = get_clear_sky(
+            df_model[["record_time", "active_power"]].dropna(),
+            index_col="record_time",
+        )
         EXOGEN_VAR_NO_SAT = [col for col in df_nwp.columns if "ghi" in col]
 
         df_fct_sat = pd.DataFrame()
@@ -258,14 +264,6 @@ for _, idf in df_static.iterrows():
 
                     if len(df_sat_nwcst) == 0:
                         print(f"Laltest CMV not available. Lag is {cmv_lag}")
-
-                    df_model = pd.merge(
-                        meas_data, df_nwp, on="record_time", how="outer"
-                    )
-                    meas_data_cs = get_clear_sky(
-                        df_model[["record_time", "active_power"]].dropna(),
-                        index_col="record_time",
-                    )
 
                     df_sat_nwcst = proc_nwp_ghi(df_sat_nwcst_all, height=0)
                     df_sat_nwcst = df_sat_nwcst.add_suffix("_" + "ncm_sat_nwcst")
