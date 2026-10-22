@@ -397,9 +397,12 @@ def pull_sekura_scada_data_minute_log(
 
 
 if __name__ == "__main__":
+    print("Pushing data for Vayu")
     download_ftp_directory(
         LOCAL_DEST, project_name="Vayu", start=start_time, end=end_time
     )
+    print("Data for Vayu pushed")
+    print("Pushing data for Sekura from Agar")
     pull_sekura_scada_data_minute_log(
         ftp_cred=config["sekura_scada_ftp_cred"],
         project_name="Agar",
@@ -407,6 +410,8 @@ if __name__ == "__main__":
         start=start_time,
         end=end_time,
     )
+    print("Data for Sekura from Agar pushed")
+    print("Pushing data for Sekura from Beempow")
     pull_sekura_scada_data(
         ftp_cred=config["sekura_scada_ftp_cred"],
         project_name="Beempow",
@@ -414,6 +419,7 @@ if __name__ == "__main__":
         start=start_time,
         end=end_time,
     )
+    print("Data for Sekura from Beempow pushed")
 
     if LOGGING:
         db_con.logging(
