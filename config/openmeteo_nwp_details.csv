@@ -1,6 +1,6 @@
 model,resolution,forecast_length,update_freq
 icon_global,2 - 11 km ,7.5,3
-gfs_global,,3 - 25 km ,16,1
+gfs_global,3 - 25 km ,16,1
 meteofrance_arpege_world025,1 - 25 km ,4,1
 ecmwf_ifs025,25km ,15,6
 ecmwf_ifs,9km ,15,6
