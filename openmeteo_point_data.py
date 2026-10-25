@@ -16,6 +16,9 @@ from urllib.parse import quote as urlquote
 from sqlalchemy import create_engine
 import numpy as np
 
+om_model_config = pd.read_csv("config/openmeteo_nwp_details.csv", index_col="model")
+om_model_config = om_model_config.to_dict(orient="index")
+
 CONFIG_PATH = os.getenv("WEATHER_CONFIG", "reinsight_config.yml")
 with open(CONFIG_PATH, "r") as f:
     config = yaml.safe_load(f)
@@ -144,7 +147,7 @@ def get_live_forecast(lats, lons, forecast_days, model):
         },
         headers=HEADERS,
     )
-    print(f"Status: {r.status_code}")
+    print(f"For {model}, status: {r.status_code}")
     out = r.json()
     return out
 
@@ -174,14 +177,7 @@ if __name__ == "__main__":
     lats = df_static["latitude"].tolist()
     lons = df_static["longitude"].tolist()
 
-    models = [
-        "ecmwf_ifs",
-        "ecmwf_ifs025",
-        "gfs_global",
-        "icon_global",
-        "ukmo_global_deterministic_10km",
-        "meteofrance_arpege_world",
-    ]
+    models = list(om_model_config.keys())
 
     OPENMETEO_MODEL_MANIFEST = (
         "../data_lake/re_insights/manifest_files/openmeteo_model_manifest.csv"
@@ -192,6 +188,7 @@ if __name__ == "__main__":
         df_manifest = pd.DataFrame(columns=models, index=[0])
 
     for model in models:
+        model_details = om_model_config[model]
         try:
             if model in df_manifest.columns:
                 existing_prediction_time = df_manifest[model].dropna().index.tolist()
@@ -209,7 +206,10 @@ if __name__ == "__main__":
                 continue
             try:
                 forecast_data = get_live_forecast(
-                    lats, lons, model=model, forecast_days=2
+                    lats,
+                    lons,
+                    model=model,
+                    forecast_days=int(model_details["forecast_length"]),
                 )
             except Exception as e:
                 db_con.logging(
