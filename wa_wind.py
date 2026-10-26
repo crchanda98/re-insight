@@ -87,7 +87,7 @@ os.makedirs(fct_dir, exist_ok=True)
 all_plants_forecast = []
 for _, idf in df_static.iterrows():
     try:
-        print(f"Running ID for {idf['plant_name']}")
+        print(f"Running WA for {idf['plant_name']}")
         db_con.logging(
             {
                 "script": SCRIPT_NAME,
@@ -182,18 +182,18 @@ for _, idf in df_static.iterrows():
         error = traceback.format_exc()
         print(error)
 
-    all_plants_forecast = pd.concat(all_plants_forecast, ignore_index=True)
-    all_plants_forecast = all_plants_forecast.reset_index(drop=True)
-    all_plants_forecast["prediction_time"] = date_now
-    all_plants_forecast["forecast_source"] = "inhouse"
-    all_plants_forecast["model_name"] = MODEL_NAME
-    df_all = pd.DataFrame(columns=fct_table_column)
-    all_plants_forecast = pd.concat([df_all, all_plants_forecast], ignore_index=True)
-    all_plants_forecast = all_plants_forecast[fct_table_column]
-    all_plants_forecast = all_plants_forecast.drop_duplicates(
-        subset=fct_table_column_un, keep="last"
-    )
-    all_plants_forecast = all_plants_forecast.set_index(fct_table_column_un)
-    db_con.push_fct_data(all_plants_forecast)
+all_plants_forecast = pd.concat(all_plants_forecast, ignore_index=True)
+all_plants_forecast = all_plants_forecast.reset_index(drop=True)
+all_plants_forecast["prediction_time"] = date_now
+all_plants_forecast["forecast_source"] = "inhouse"
+all_plants_forecast["model_name"] = MODEL_NAME
+df_all = pd.DataFrame(columns=fct_table_column)
+all_plants_forecast = pd.concat([df_all, all_plants_forecast], ignore_index=True)
+all_plants_forecast = all_plants_forecast[fct_table_column]
+all_plants_forecast = all_plants_forecast.drop_duplicates(
+    subset=fct_table_column_un, keep="last"
+)
+all_plants_forecast = all_plants_forecast.set_index(fct_table_column_un)
+db_con.push_fct_data(all_plants_forecast)
 
-    print(f"✅ Forecast successfully generated")
+print(f"✅ Forecast successfully generated")
