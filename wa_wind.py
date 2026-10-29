@@ -108,6 +108,9 @@ for _, idf in df_static.iterrows():
         meas_data = meas_data[["record_time", "active_power"]]
         latest_ftp_time = meas_data["record_time"].max()
         meas_data = meas_data.rename(columns={"record_time": "forecast_time"})
+        meas_data["forecast_time"] = meas_data["forecast_time"].dt.tz_convert(
+            "Asia/Kolkata"
+        )
         if LOGGING:
             db_con.logging(
                 {
@@ -134,21 +137,37 @@ for _, idf in df_static.iterrows():
             values="wind_speed",
         )
         df_nwp = df_nwp.reset_index()
+        df_nwp["forecast_time"] = df_nwp["forecast_time"].dt.tz_convert("Asia/Kolkata")
+        model_cols = ["cmc_gem_gdps", "ecmwf_ifs", "gfs_global", "icon_global"]
+        ### RESAMPLE NWP FOR ALL DAY NUM
+        df_nwp = (
+            df_nwp.set_index("forecast_time")
+            .groupby("day_num")[model_cols]
+            .apply(lambda x: x.resample("15min").interpolate(method="linear"))
+            .reset_index()
+            .sort_values(["forecast_time", "day_num"])
+            .reset_index(drop=True)
+        )
+
         df_forecast = []
-        for iday in range(1, 10):
+        for iday in range(1, 8):
+            idate = date_now + timedelta(days=iday)
             df_nwp_iday = df_nwp[df_nwp["day_num"] == iday]
             df_nwp_iday = df_nwp_iday.drop("day_num", axis=1)
             df_nwp_iday = df_nwp_iday.set_index("forecast_time")
-            df_nwp_iday = df_nwp_iday.resample("15min").interpolate(method="linear")
-            df_nwp_iday = df_nwp_iday.reset_index()
             df_nwp_iday = df_nwp_iday.dropna(axis=1, how="all")
-            features = [x for x in df_nwp_iday.columns if x != "forecast_time"]
             df_model = pd.merge(df_nwp_iday, meas_data, on="forecast_time", how="left")
-            df_model["forecast_time"] = df_model["forecast_time"].dt.tz_convert(
-                "Asia/Kolkata"
-            )
             df_train = df_model.dropna()
-            df_test = df_model[df_model["forecast_time"] >= fct_start_time]
+
+            df_test = df_nwp[df_nwp["forecast_time"].dt.date == idate.date()]
+            df_test = df_test[df_test["day_num"] >= iday]
+            df_test = df_test.sort_values(by=["forecast_time", "day_num"])
+            df_test = df_test.drop_duplicates(subset="forecast_time", keep="first")
+            df_test = df_test.dropna(axis=1)
+            df_test = df_test.dropna()
+            df_test = df_test.drop("day_num", axis=1)
+            features = [x for x in df_test.columns if x != "forecast_time"]
+            print(iday, features)
             if len(df_test) == 0:
                 print(iday, "no data")
                 continue
@@ -171,12 +190,14 @@ for _, idf in df_static.iterrows():
             df_test["active_power"] = forecast
             df_forecast.append(df_test)
         df_forecast = pd.concat(df_forecast)
-        df_forecast = df_forecast[df_forecast["forecast_time"] >= fct_start_time]
-        df_forecast = df_forecast[df_forecast["forecast_time"] < fct_end_time]
-        df_ftp = df_forecast[["forecast_time", "active_power"]]
+        df_forecast["plant_name"] = idf["plant_name"]
         fct_filename = f"../data_lake/re_insights/rel_time_fct/weekahead_wind_rf_{plant_name}_{MODEL_NAME}_{fct_start_time.strftime('%Y%m%d')}.csv"
+        df_ftp = df_forecast[["forecast_time", "active_power"]]
         df_ftp.to_csv(fct_filename, index=False)
         push_fct_to_ftp(fct_filename, target_folder_ftp)
+        df_forecast["plant_id"] = idf["plant_id"]
+        df_forecast = df_forecast[df_forecast["forecast_time"] >= fct_start_time]
+        df_forecast = df_forecast[df_forecast["forecast_time"] < fct_end_time]
         all_plants_forecast.append(df_forecast)
     except:
         error = traceback.format_exc()
