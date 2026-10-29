@@ -204,7 +204,17 @@ for _, idf in df_static.iterrows():
             df_model[["record_time", "active_power"]].dropna(),
             index_col="record_time",
         )
-        EXOGEN_VAR_NO_SAT = [col for col in df_nwp.columns if "ghi" in col]
+        df_nwp_fct = df_nwp.set_index("record_time")
+        df_nwp_fct = df_nwp_fct.loc[
+            fct_start_time.strftime("%Y-%m-%dT%H:%M:%S") : fct_end_time.strftime(
+                "%Y-%m-%dT%H:%M:%S"
+            )
+        ]
+        df_nwp_fct = df_nwp_fct.dropna(axis=1)
+
+        EXOGEN_VAR_NO_SAT = [col for col in df_nwp_fct.columns if "ghi" in col]
+        df_nwp = df_nwp[EXOGEN_VAR_NO_SAT]
+        print(f"Using {EXOGEN_VAR_NO_SAT} as NWP")
 
         df_fct_sat = pd.DataFrame()
         if date_now.hour >= 2:
@@ -308,7 +318,7 @@ for _, idf in df_static.iterrows():
                         df_fct_sat = df_fct_sat.reset_index()
                         df_fct_sat["model_name"] = "intraday_linreg_sat"
                     else:
-                        print("No forecast data")
+                        print("No forecast data for satellite CMV")
             except Exception as e:
                 e = traceback.format_exc()
                 print(e)
