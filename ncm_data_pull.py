@@ -43,7 +43,7 @@ password = config["ncm_password"]
 base_url = config["base_url"]
 data_func = utils.APICon(base_url=base_url)
 
-url = "https://pdscloud.ncmrwf.gov.in:8443/api/v1/REdownload"
+url = "https://ftp.ncmrwf.gov.in:8443/api/v1/REdownload"
 temp_dir = os.path.join(config["temp_dir"], "ncm_data")
 
 csv_path = config["ncm_csv_data"]

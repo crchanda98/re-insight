@@ -93,7 +93,7 @@ else:
 username = CONFIG["ncm_sat_user"]
 password = CONFIG["ncm_sat_password"]
 
-url = "https://pdscloud.ncmrwf.gov.in:8443/api/v1/REdownload"
+url = "https://ftp.ncmrwf.gov.in:8443/api/v1/REdownload"
 
 files = [
     {"url": url, "variable": "satimage_data"},

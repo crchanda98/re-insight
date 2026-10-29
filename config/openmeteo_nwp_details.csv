@@ -5,7 +5,6 @@ meteofrance_arpege_world025,1 - 25 km ,4,1
 ecmwf_ifs025,25km ,15,6
 ecmwf_ifs,9km ,15,6
 ukmo_global_deterministic_10km,2 - 10 km ,7,1
-kma_gdaps,1.5 - 13 km ,12,6
 jma_gsm,5 - 55 km ,11,3
 cmc_gem_gdps,2.5 km ,10,6
 bom_access_global,15 km ,10,6

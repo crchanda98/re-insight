@@ -54,7 +54,7 @@ db_con = utils.DBcon(con=engine, db_schema=db_columns)
 df_static = db_con.get_static_data()
 df_static = df_static[df_static["parent_id"] != 0]
 
-url = "https://pdscloud.ncmrwf.gov.in:8443/api/v1/REdownload"
+url = "https://ftp.ncmrwf.gov.in:8443/api/v1/REdownload"
 
 root_path = os.path.join(CONFIG["temp_dir"], "ncm_ad_data")
 
