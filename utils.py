@@ -514,19 +514,19 @@ def get_dsm_regulation(actual, forecast, avc_kw, regulation, ppa_rate=5.0):
 
     if regulation == "CTU-WIND":
         slab1_err = np.minimum(error_pct, 15)
-        slab2_err = np.minimum(np.maximum(error_pct - 20, 0), 5)
+        slab2_err = np.minimum(np.maximum(error_pct - 15, 0), 5)
         slab3_err = np.maximum(error_pct - 20, 0)
         slab2_energy = (slab2_err / 100) * avc_kwh
         slab3_energy = (slab3_err / 100) * avc_kwh
-        total_dsm_penalty_rs = (slab2_energy * 0.1) + (slab3_energy * ppa_rate)
+        total_dsm_penalty_rs = (slab2_energy * 0.1 + slab3_energy) * ppa_rate
 
     elif regulation == "CTU-SOLAR":
         slab1_err = np.minimum(error_pct, 10)
-        slab2_err = np.minimum(np.maximum(error_pct - 15, 0), 5)
+        slab2_err = np.minimum(np.maximum(error_pct - 10, 0), 5)
         slab3_err = np.maximum(error_pct - 15, 0)
         slab2_energy = (slab2_err / 100) * avc_kwh
         slab3_energy = (slab3_err / 100) * avc_kwh
-        total_dsm_penalty_rs = (slab2_energy * 0.1) + (slab3_energy * ppa_rate)
+        total_dsm_penalty_rs = (slab2_energy * 0.1 + slab3_energy) * ppa_rate
 
     elif regulation == "MP":
         slab1_err = np.minimum(error_pct, 15)
