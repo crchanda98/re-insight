@@ -5,6 +5,7 @@ import os
 from ftplib import FTP
 import utils
 import argparse
+import requests
 import traceback
 import yaml
 from sqlalchemy import create_engine
@@ -30,6 +31,10 @@ CONFIG_PATH = os.environ.get("WEATHER_CONFIG", "reinsight_config.yml")
 
 with open(CONFIG_PATH, "r") as f:
     config = yaml.safe_load(f)
+API_KEY = config["flask_api_key"]
+BASE_URL = config["flask_base_url"]
+API_PUSH = config["push_data_in_api"]
+BASE_URL = "http://127.0.0.1:5000"
 
 db_cred = config["db_cred"]
 
@@ -115,7 +120,7 @@ def upload_meas_data(filename):
     )
 
 
-def upload_meas_data_beempao(filename, plant_name):
+def upload_meas_data_beempao(filename, plant_name, api_push=False):
     df_all = pd.read_csv(filename)
     columns = [
         "plant_id",
@@ -159,6 +164,15 @@ def upload_meas_data_beempao(filename, plant_name):
     df_all = pd.concat([df_db, df_all])
     df_all = df_all.dropna(axis=0, how="all")
     df_all = df_all[columns]
+    if api_push:
+        print("Pushing in API")
+        push_dataframe_to_api(
+            df=df_all,
+            plant_name=plant_name,
+            base_url=BASE_URL,
+            api_key=API_KEY,
+        )
+
     df_all = df_all.set_index(db_columns["meas_table"]["unique_constraint"])
     db_con.push_meas_data(df_all)
     db_con.logging(
@@ -170,7 +184,7 @@ def upload_meas_data_beempao(filename, plant_name):
     )
 
 
-def upload_meas_data_beempao_minute_log(filename, plant_name):
+def upload_meas_data_beempao_minute_log(filename, plant_name, api_push=False):
     df_all = pd.read_csv(filename, index_col=False)
     columns = [
         "plant_id",
@@ -216,6 +230,13 @@ def upload_meas_data_beempao_minute_log(filename, plant_name):
         pd.to_numeric, errors="coerce"
     )
     df_all = df_all.round(2)
+    if api_push:
+        push_dataframe_to_api(
+            df=df_all,
+            plant_name=plant_name,
+            base_url=BASE_URL,
+            api_key=API_KEY,
+        )
     df_all = df_all.set_index(db_columns["meas_table"]["unique_constraint"])
     db_con.push_meas_data(df_all)
     db_con.logging(
@@ -256,7 +277,6 @@ def download_ftp_directory(local_path, project_name, start, end):
                             os.makedirs(local_dir)
                         if os.path.exists(local_filename):
                             print(f"Exist {filename}...")
-                            # upload_meas_data(local_filename)
                             continue
                         remote_path_date = (
                             f"/RealTime_SCADA/{PLANT_NAME}/{itime.strftime('%Y/%m/%d')}"
@@ -286,6 +306,56 @@ def download_ftp_directory(local_path, project_name, start, end):
     except Exception as e:
         e = traceback.format_exc()
         print(f"An error occurred: {e}")
+
+
+def push_dataframe_to_api(df, plant_name, base_url, api_key):
+    """Converts a pandas DataFrame and pushes it to the Flask /meas/push API."""
+    if df.empty:
+        print("DataFrame is empty. Skipping push.")
+        return
+
+    endpoint = f"{base_url.rstrip('/')}/meas/push"
+
+    df_to_push = df.copy()
+
+    # 1. Safely convert ONLY columns that represent dates/times (e.g. record_time)
+    for col in df_to_push.columns:
+        if "time" in col.lower() or "date" in col.lower():
+            try:
+                df_to_push[col] = pd.to_datetime(df_to_push[col], errors="coerce")
+                df_to_push[col] = df_to_push[col].dt.strftime("%Y-%m-%d %H:%M:%S")
+            except Exception:
+                pass  # Skip if conversion fails
+
+    # 2. Replace NaN, NaT, and infinity values with Python None so JSON serialization succeeds
+    df_to_push = df_to_push.where(pd.notnull(df_to_push), None)
+
+    # Convert DataFrame to records (list of dictionaries)
+    records = df_to_push.to_dict(orient="records")
+
+    headers = {
+        "X-API-Key": api_key,
+        "Content-Type": "application/json",
+    }
+
+    payload = {"data": records}
+
+    try:
+        print(f"Pushing {len(records)} records for {plant_name} to {endpoint}...")
+        response = requests.post(endpoint, json=payload, headers=headers, timeout=60)
+
+        if response.status_code == 201:
+            print(f"Successfully pushed data: {response.json()}")
+        elif response.status_code == 409:
+            print(f"Constraint violation error: {response.json()}")
+        else:
+            print(
+                f"Failed to push data. Status Code: {response.status_code},"
+                f" Response: {response.text}"
+            )
+
+    except requests.exceptions.RequestException as e:
+        print(f"Network error occurred while pushing data: {e}")
 
 
 def pull_sekura_scada_data(ftp_cred, project_name, local_path, start, end):
@@ -396,28 +466,124 @@ def pull_sekura_scada_data_minute_log(
             print(f"An error occurred: {e}")
 
 
+def pull_sekura_scada_data_unif(
+    ftp_cred, project_name, local_path, start, end, skip_local=False, api_push=False
+):
+    FTP_HOST = ftp_cred["host"]
+    FTP_USER = ftp_cred["user"]
+    FTP_PASS = ftp_cred["password"]
+    #### ADDING ONE DAY EXTRA AS FTP DATA IS UPLOADED ON DAILY BASIS
+    #### WE ALSO DON'T CHECK LOCAL FILE AS
+    start = start - timedelta(days=1)
+    time_series = pd.date_range(start, end, freq="D").to_list()
+    time_series.reverse()
+
+    with FTP(FTP_HOST) as ftp:
+        ftp.login(user=FTP_USER, passwd=FTP_PASS)
+        for itime in time_series:
+            print(f"Connected to {FTP_HOST}")
+            db_con.logging(
+                {
+                    "script": SCRIPT_NAME,
+                    "log_type": "info",
+                    "message": f"FTP server connected for {project_name}",
+                }
+            )
+            PLANT_NAME = "Sekura_Agar350"
+            try:
+                filename = itime.strftime("%d-%m-%Y.csv")
+                local_dir = os.path.join(local_path, project_name, PLANT_NAME)
+                if not os.path.exists(local_dir):
+                    os.makedirs(local_dir)
+                local_filename = os.path.join(local_dir, filename)
+
+                if os.path.exists(local_filename):
+                    print(f"Exist {filename}...")
+                    if skip_local:
+                        print("Skipping...")
+                        # continue
+
+                remote_path_date = f"/FTP/{project_name}"
+                ftp.cwd(remote_path_date)
+                file_list_ftp = ftp.nlst()
+                print(f"Processing {filename}...")
+                if filename in file_list_ftp:
+                    print(f"Found {filename} on FTP server.")
+                    print(f"Downloading {filename}...")
+                    with open(local_filename, "wb") as f:
+                        ftp.retrbinary(f"RETR {filename}", f.write)
+                        local_filename = os.path.join(local_dir, filename)
+
+                    upload_meas_data_beempao_minute_log(
+                        local_filename, PLANT_NAME, api_push=api_push
+                    )
+                else:
+                    print(f"Not Found {filename} on FTP server.")
+            except Exception as e:
+                e = traceback.format_exc()
+                print(f"An error occurred: {e}")
+
+            try:
+                filename = PLANT_NAME + "_" + itime.strftime("%Y%m%d.csv")
+                local_dir = os.path.join(local_path, project_name, PLANT_NAME)
+                if not os.path.exists(local_dir):
+                    os.makedirs(local_dir)
+                local_filename = os.path.join(local_dir, filename)
+
+                if os.path.exists(local_filename):
+                    print(f"Exist {filename}...")
+
+                remote_path_date = f"/FTP/{project_name}"
+                ftp.cwd(remote_path_date)
+                file_list_ftp = ftp.nlst()
+                print(f"Processing {filename}...")
+                if filename in file_list_ftp:
+                    print(f"Found {filename} on FTP server.")
+                    print(f"Downloading {filename}...")
+                    with open(local_filename, "wb") as f:
+                        ftp.retrbinary(f"RETR {filename}", f.write)
+                    upload_meas_data_beempao(
+                        local_filename, PLANT_NAME, api_push=api_push
+                    )
+                else:
+                    print(f"Not Found {filename} on FTP server.")
+            except Exception as e:
+                e = traceback.format_exc()
+                print(f"An error occurred: {e}")
+
+
 if __name__ == "__main__":
     print("Pushing data for Vayu")
     download_ftp_directory(
         LOCAL_DEST, project_name="Vayu", start=start_time, end=end_time
     )
     print("Data for Vayu pushed")
-    print("Pushing data for Sekura from Agar")
-    pull_sekura_scada_data_minute_log(
-        ftp_cred=config["sekura_scada_ftp_cred"],
-        project_name="Agar",
-        local_path=LOCAL_DEST,
-        start=start_time,
-        end=end_time,
-    )
-    print("Data for Sekura from Agar pushed")
-    print("Pushing data for Sekura from Beempow")
-    pull_sekura_scada_data(
+    # print("Pushing data for Sekura from Agar")
+    # pull_sekura_scada_data_minute_log(
+    #     ftp_cred=config["sekura_scada_ftp_cred"],
+    #     project_name="Agar",
+    #     local_path=LOCAL_DEST,
+    #     start=start_time,
+    #     end=end_time,
+    # )
+    # print("Data for Sekura from Agar pushed")
+    # print("Pushing data for Sekura from Beempow")
+    # pull_sekura_scada_data(
+    #     ftp_cred=config["sekura_scada_ftp_cred"],
+    #     project_name="Beempow",
+    #     local_path=LOCAL_DEST,
+    #     start=start_time,
+    #     end=end_time,
+    # )
+    # print("Data for Sekura from Beempow pushed")
+    print("Pushing data for Sekura")
+    pull_sekura_scada_data_unif(
         ftp_cred=config["sekura_scada_ftp_cred"],
         project_name="Beempow",
         local_path=LOCAL_DEST,
         start=start_time,
         end=end_time,
+        api_push=API_PUSH,
     )
     print("Data for Sekura from Beempow pushed")
 
