@@ -373,20 +373,37 @@ def push_static_data():
 @app.route("/meas/push", methods=["POST"])
 @require_api_key
 def push_meas_data():
-    """Upload measurement records to meas_table via the API."""
+    """Upload measurement records to meas_table via PostgreSQL API."""
     data = request.json.get("data", [])
     if not data:
         return jsonify({"error": "No data provided"}), 400
+
     try:
         df = pd.DataFrame(data)
-        # Ensure the DataFrame columns match the DB schema; let DuckDB handle column mapping
-        with engine.connect() as conn:
-            conn.execute("INSERT INTO re_insight.meas_table SELECT * FROM df")
-        return jsonify({"message": f"Inserted {len(df)} records"}), 201
-    except psycopg2.IntegrityError as e:
-        error_msg = str(e)
-        log_error("/meas/push", f"ConstraintException: {error_msg}")
-        return jsonify({"error": "Constraint violation", "details": error_msg}), 409
+        columns = list(df.columns)
+        values = [tuple(x) for x in df.to_numpy()]
+        columns_str = ", ".join([f'"{col}"' for col in columns])
+
+        # Build the UPDATE set clause for all columns except the primary keys
+        update_cols = [col for col in columns if col not in ("plant_id", "record_time")]
+        set_str = ", ".join([f'"{col}" = EXCLUDED."{col}"' for col in update_cols])
+
+        with engine.begin() as conn:
+            raw_conn = conn.connection
+            with raw_conn.cursor() as cursor:
+                insert_query = f"""
+                    INSERT INTO re_insight.meas_table ({columns_str})
+                    VALUES %s
+                    ON CONFLICT (plant_id, record_time) 
+                    DO UPDATE SET {set_str}
+                """
+                psycopg2.extras.execute_values(cursor, insert_query, values)
+
+        return (
+            jsonify({"message": f"Processed {len(df)} records (upserted)"}),
+            201,
+        )
+
     except Exception as e:
         error_msg = str(e)
         tb_str = traceback.format_exc()
