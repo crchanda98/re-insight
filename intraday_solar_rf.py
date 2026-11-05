@@ -133,19 +133,24 @@ for _, idf in df_static.iterrows():
                 "meteofrance_arpege_world",
             ]
         ):
-            nwp_data = db_con.get_weather_data(
-                plant=plant_name,
-                model=imodel,
-                start_date=train_start_time.strftime("%Y-%m-%dT%H:%M:%S"),
-                end_date=fct_end_time.strftime("%Y-%m-%dT%H:%M:%S"),
-            )
-            df_nwp_i = proc_nwp_ghi(nwp_data, height=10)
-            df_nwp_i = df_nwp_i.add_suffix("_" + imodel)
-            df_nwp_i = df_nwp_i.reset_index()
-            if i == 0:
-                df_nwp = df_nwp_i
-            else:
-                df_nwp = pd.merge(df_nwp, df_nwp_i, on="forecast_time", how="left")
+            try:
+                nwp_data = db_con.get_weather_data(
+                    plant=plant_name,
+                    model=imodel,
+                    start_date=train_start_time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    end_date=fct_end_time.strftime("%Y-%m-%dT%H:%M:%S"),
+                )
+                df_nwp_i = proc_nwp_ghi(nwp_data, height=10)
+                df_nwp_i = df_nwp_i.add_suffix("_" + imodel)
+                df_nwp_i = df_nwp_i.reset_index()
+                if i == 0:
+                    df_nwp = df_nwp_i
+                else:
+                    df_nwp = pd.merge(df_nwp, df_nwp_i, on="forecast_time", how="left")
+            except Exception as e:
+                e = traceback.format_exc()
+                print(e)
+                print(f"Could not process nwp data for {imodel}")
 
         nwp_data = db_con.get_weather_data(
             plant=plant_name,
