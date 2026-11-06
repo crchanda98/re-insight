@@ -9,6 +9,11 @@ import utils
 import extra_streamlit_components as stx
 import warnings
 import numpy as np
+import timeseries_app
+import scatter_app
+import clearsky_app
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 warnings.filterwarnings(action="ignore")
 
@@ -20,7 +25,6 @@ REQUIRE_LOGIN = CONFIG["dashboard"]["login"]
 CREDENTIALS = CONFIG["dashboard"]["credentials"]
 FORECAST_MODELS = CONFIG["internal_models"]
 
-# Page config for better appearance
 st.set_page_config(
     page_title="Measurement Dashboard",
     page_icon="⚡",
@@ -61,29 +65,44 @@ if REQUIRE_LOGIN:
         st.stop()
 
 
-# Your existing logout function
+def data_cleaning_page():
+    selected_tool = st.selectbox(
+        "Select Data Cleaning Tool",
+        options=[
+            "Time-Series Anomaly Detection",
+            "Multivariate Scatter Cleanup",
+            "Clear Sky Profile Generator",
+        ],
+        key="data_cleaning_nav",
+    )
+
+    st.markdown("---")
+
+    if selected_tool == "Time-Series Anomaly Detection":
+        timeseries_app.run_timeseries()
+    elif selected_tool == "Multivariate Scatter Cleanup":
+        scatter_app.run_scatter()
+    elif selected_tool == "Clear Sky Profile Generator":
+        clearsky_app.run_clearsky_app()
+
+
 def logout():
     try:
-        # Clear cookies safely
         if "authenticated" in cookie_manager.get_all():
             cookie_manager.delete("authenticated", key="del_auth_cookie")
     except Exception:
         pass
 
-    # Reset auth states
     st.session_state.authenticated = False
 
-    # TRICK: Instead of st.session_state.clear(), manually clear keys
-    # or let st.rerun() reset the app state cleanly.
     for key in list(st.session_state.keys()):
-        if key != "del_auth_cookie":  # Keep the cookie widget key safe during the rerun
+        if key != "del_auth_cookie":
             del st.session_state[key]
 
     st.rerun()
 
 
 # # --- SIDEBAR NAVIGATION & LOGOUT ---
-# Custom CSS for a more premium look
 st.markdown(
     """
 <style>
@@ -155,8 +174,20 @@ def penalty_kpi(sch, act, avc, regulation, ppa=5):
     Revenue_Loss = penalty["Under_Injection_DSM_Penalty_Rs"]
     Total_Loss = penalty["Total_Statutory_DSM_Penalty_Rs"]
     DSM_impact = penalty["DSM_Impact_Rs_per_Actual_kWh"]
-    Loss_percentage = penalty["Total_loss_percentage"]  # .mean().round(2)
-    return DSM_Loss, Revenue_Loss, Total_Loss, DSM_impact, Loss_percentage
+    Loss_percentage = penalty["Total_loss_percentage"]
+    ts_over = penalty["ts_over_injection_rs"]
+    ts_under = penalty["ts_under_injection_rs"]
+    ts_impact = penalty["ts_dsm_impact_ps_kwh"]
+    return (
+        DSM_Loss,
+        Revenue_Loss,
+        Total_Loss,
+        DSM_impact,
+        Loss_percentage,
+        ts_over,
+        ts_under,
+        ts_impact,
+    )
 
 
 @st.cache_data
@@ -178,8 +209,6 @@ def measurement_page():
         if not df_static.empty
         else []
     )
-
-    # Main Area Configuration Header using Columns in an Expander
     with st.expander("🎛️ Filter Configuration", expanded=True):
         if not plants:
             st.warning("⚠️ No plants fetched. Ensure database connection is valid.")
@@ -210,7 +239,10 @@ def measurement_page():
                 FORECAST_MODELS,
             )
         with r2_col3:
-            st.text_input("Model Name Input", value="intraday_wind")
+            meas_source = st.selectbox(
+                "Source",
+                ("meas raw", "meas clean"),
+            )
 
         # Row 3
         r3_col1, r3_col2, r3_col3 = st.columns(3)
@@ -228,7 +260,6 @@ def measurement_page():
                 "PPA Rate", min_value=0.0, value=5.0, step=0.1
             )
 
-        # Extract AVC from static data if available
         avc_static = 100.0
         if selected_plant and not df_static.empty:
             plant_static = df_static[df_static["plant_name"] == selected_plant]
@@ -253,8 +284,13 @@ def measurement_page():
 
             with st.spinner(f"Fetching data for {selected_plant}..."):
                 try:
+                    db_source_param = "clean" if meas_source == "meas clean" else "raw"
+
                     df_meas = db_con.get_meas_data(
-                        plant=selected_plant, start_date=start_dt, end_date=end_dt
+                        plant=selected_plant,
+                        start_date=start_dt,
+                        end_date=end_dt,
+                        source=db_source_param,
                     )
                     total_power_generated = df_meas["active_power"].sum() / 4 / 1000
                     total_revenue = (
@@ -292,7 +328,6 @@ def measurement_page():
                         except Exception as e:
                             st.warning(f"Could not fetch forecast data: {e}")
 
-                    # Process Measurement Data
                     if (
                         df_meas is not None
                         and not df_meas.empty
@@ -310,7 +345,6 @@ def measurement_page():
                                 columns={"active_power": "meas_active_power"}
                             )
 
-                    # Process Forecast Data
                     if (
                         df_fct is not None
                         and not df_fct.empty
@@ -345,7 +379,6 @@ def measurement_page():
                                 columns={"active_power": "fct_active_power"}
                             )
 
-                    # Combine Data
                     combined_df = pd.DataFrame()
                     if (df_meas is not None and not df_meas.empty) and (
                         df_fct is not None and not df_fct.empty
@@ -378,6 +411,9 @@ def measurement_page():
                                 total_loss,
                                 dsm_impact,
                                 loss_percentage,
+                                ts_over,
+                                ts_under,
+                                ts_impact,
                             ) = penalty_kpi(
                                 sch=df_nona[imodel],
                                 act=df_nona["meas_active_power"],
@@ -385,6 +421,17 @@ def measurement_page():
                                 ppa=ppa_rate_input,
                                 regulation=regulation,
                             )
+                            if imodel == "fct_active_power":
+                                combined_df.loc[df_nona.index, "Plot_DSM_Loss"] = (
+                                    ts_over
+                                )
+                                combined_df.loc[df_nona.index, "Plot_Revenue_Loss"] = (
+                                    ts_under
+                                )
+                                combined_df.loc[df_nona.index, "Plot_DSM_Impact"] = (
+                                    ts_impact
+                                )
+
                             df_score.loc[imodel, "DSM Impact (ps/kWh)"] = (
                                 dsm_impact * 100
                             )
@@ -443,41 +490,182 @@ def measurement_page():
                             colors = [
                                 color_mapping.get(c, "#3498db") for c in cols_to_plot
                             ]
-                            try:
-                                st.line_chart(
-                                    combined_df[cols_to_plot],
-                                    use_container_width=True,
-                                    color=colors,
+
+                            fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+                            # 1. Lines for Power (Primary Y-Axis - Left)
+                            if "meas_active_power" in cols_to_plot:
+                                fig.add_trace(
+                                    go.Scatter(
+                                        x=combined_df.index,
+                                        y=combined_df["meas_active_power"],
+                                        name="Meas Power",
+                                        mode="lines",
+                                        line=dict(color="#2ecc71", width=2),
+                                    ),
+                                    secondary_y=False,
                                 )
-                            except TypeError:
-                                st.line_chart(
-                                    combined_df[cols_to_plot], use_container_width=True
+                            if "fct_active_power" in cols_to_plot:
+                                fig.add_trace(
+                                    go.Scatter(
+                                        x=combined_df.index,
+                                        y=combined_df["fct_active_power"],
+                                        name="Forecast",
+                                        mode="lines",
+                                        line=dict(color="#e74c3c", width=2),
+                                    ),
+                                    secondary_y=False,
                                 )
+                            if "schedule" in cols_to_plot:
+                                fig.add_trace(
+                                    go.Scatter(
+                                        x=combined_df.index,
+                                        y=combined_df["schedule"],
+                                        name="Schedule",
+                                        mode="lines",
+                                        line=dict(color="#f1c40f", width=2),
+                                    ),
+                                    secondary_y=False,
+                                )
+
+                            # 2. Shadow Bars for Impact (Secondary Y-Axis - Right)
+                            if "Plot_DSM_Impact" in combined_df.columns:
+                                fig.add_trace(
+                                    go.Bar(
+                                        x=combined_df.index,
+                                        y=combined_df["Plot_DSM_Impact"],
+                                        name="DSM Impact",
+                                        opacity=0.4,
+                                        marker_color="#e67e22",
+                                        marker_line_width=0,
+                                    ),
+                                    secondary_y=True,
+                                )
+
+                            # 3. Configure Layout
+                            fig.update_layout(
+                                barmode="group",
+                                hovermode="x unified",
+                                margin=dict(l=40, r=40, t=40, b=40),
+                                legend=dict(
+                                    orientation="h",
+                                    yanchor="bottom",
+                                    y=1.02,
+                                    xanchor="right",
+                                    x=1,
+                                ),
+                            )
+
+                            # 4. Set Axis Titles and Grid Visibility
+                            fig.update_yaxes(title_text="Power (MW)", secondary_y=False)
+                            fig.update_yaxes(
+                                title_text="DSM Impact (ps/kWh)",
+                                title_font=dict(color="#e67e22"),
+                                tickfont=dict(color="#e67e22"),
+                                secondary_y=True,
+                                showgrid=False,
+                            )
+
+                            st.plotly_chart(fig, use_container_width=True)
                         else:
                             st.warning("No numeric columns found to plot.")
 
+                        # --- SIDE-BY-SIDE ALIGNMENT: TABLE & SCATTER PLOT ---
                         combined_df = combined_df.sort_index(ascending=False)
-                        st.markdown("### 📋 Combined Raw Data")
-                        st.dataframe(
-                            combined_df[cols_to_plot] if cols_to_plot else combined_df,
-                            use_container_width=True,
-                        )
 
-                        st.download_button(
-                            label="📥 Download Raw Data (CSV)",
-                            data=convert_for_download(
-                                combined_df[cols_to_plot]
-                                if cols_to_plot
-                                else combined_df
-                            ),
-                            file_name=f"{selected_plant}_raw_data_{start_date}_{end_date}.csv",
-                            mime="text/csv",
-                        )
+                        table_col, scatter_col = st.columns([1, 2])
+
+                        with table_col:
+                            st.markdown("### 📋 Combined Raw Data")
+                            st.dataframe(
+                                (
+                                    combined_df[cols_to_plot]
+                                    if cols_to_plot
+                                    else combined_df
+                                ),
+                                height=450,
+                                use_container_width=True,
+                            )
+
+                            st.download_button(
+                                label="📥 Download Raw Data (CSV)",
+                                data=convert_for_download(
+                                    combined_df[cols_to_plot]
+                                    if cols_to_plot
+                                    else combined_df
+                                ),
+                                file_name=f"{selected_plant}_raw_data_{start_date}_{end_date}.csv",
+                                mime="text/csv",
+                            )
+
+                        with scatter_col:
+                            st.markdown("### ⚡ Power Curve & DSM Impact")
+
+                            ws_col = (
+                                "wind_speed"
+                                if "wind_speed" in combined_df.columns
+                                else ("ws" if "ws" in combined_df.columns else None)
+                            )
+
+                            # Calculate 20% of PPA Rate in paise/kWh
+                            max_dsm_scale = 0.20 * (ppa_rate_input * 100)
+
+                            if (
+                                ws_col
+                                and "meas_active_power" in combined_df.columns
+                                and "Plot_DSM_Impact" in combined_df.columns
+                            ):
+                                fig_scatter = go.Figure(
+                                    data=go.Scatter(
+                                        x=combined_df[ws_col],
+                                        y=combined_df["meas_active_power"],
+                                        mode="markers",
+                                        marker=dict(
+                                            size=10,
+                                            color=combined_df["Plot_DSM_Impact"],
+                                            colorscale="YlOrRd",
+                                            showscale=True,
+                                            cmin=0,
+                                            cmax=max_dsm_scale,
+                                            colorbar=dict(
+                                                title="DSM Impact<br>(ps/kWh)"
+                                            ),
+                                            opacity=0.9,
+                                            line=dict(
+                                                width=0.5, color="rgba(0,0,0,0.4)"
+                                            ),
+                                        ),
+                                        text=combined_df.index.strftime(
+                                            "%Y-%m-%d %H:%M"
+                                        ),
+                                        hovertemplate=(
+                                            "Time: %{text}<br>"
+                                            "Wind Speed: %{x:.2f} m/s<br>"
+                                            "Actual Power: %{y:.2f}<br>"
+                                            "DSM Impact: %{marker.color:.2f} ps/kWh"
+                                            "<extra></extra>"
+                                        ),
+                                    )
+                                )
+                                fig_scatter.update_layout(
+                                    xaxis_title="Wind Speed (m/s)",
+                                    yaxis_title="Actual Power",
+                                    margin=dict(l=40, r=40, t=40, b=40),
+                                    height=450,
+                                    hovermode="closest",
+                                )
+                                st.plotly_chart(fig_scatter, use_container_width=True)
+                            else:
+                                st.warning(
+                                    "⚠️ Wind speed column or DSM impact data not detected."
+                                )
+                except Exception as e:
+                    st.error(f"Database Query Error: {e}")
 
                 except Exception as e:
                     st.error(f"Database Query Error: {e}")
     elif not selected_plant:
-        # Initial state
+
         st.info(
             "👆 Please select a plant and date range from the configuration panel above, then click 'Fetch Data'."
         )
@@ -514,6 +702,7 @@ def logging_page():
 pages = {
     "DSM Dashboard": measurement_page,
     "Log Dashboard": logging_page,
+    "Data Cleaning Dashboard": data_cleaning_page,
 }
 
 # --- 2. Sidebar Navigation (Top of Sidebar) ---
