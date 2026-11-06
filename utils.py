@@ -430,22 +430,38 @@ class DBcon:
             if_row_exists="update",
         )
 
-    def get_meas_data(self, plant, start_date, end_date, print_query=False):
+    def get_meas_data(
+        self, plant, start_date, end_date, source="raw", print_query=False
+    ):
+        if source == "clean":
+            table_name = "re_insight.meas_cleaned_table"
+        elif source == "raw":
+            table_name = "re_insight.meas_table"
+        else:
+            raise ValueError("Invalid source. Please use 'raw' or 'clean'.")
         ist = self.df_static[self.df_static["plant_name"] == plant].iloc[0]
-        query = f"select * from re_insight.meas_table \
-            where plant_id = {ist['plant_id']} \
-            and record_time between '{start_date}' and '{end_date}'"
+        query = f"SELECT * FROM {table_name} \
+            WHERE plant_id = {ist['plant_id']} \
+            AND record_time BETWEEN '{start_date}' AND '{end_date}'"
         if print_query:
             print(query)
         df_weather = pd.read_sql(query, con=self.conn)
         df_weather["plant_name"] = ist["plant_name"]
+
         return df_weather
 
-    def push_meas_data(self, idf):
+    def push_meas_data(self, idf, source="raw"):
+        if source == "clean":
+            target_table = "meas_cleaned_table"
+        elif source == "raw":
+            target_table = "meas_table"
+        else:
+            raise ValueError("Invalid source. Please use 'raw' or 'clean'.")
+
         upsert(
             con=self.conn,
             df=idf,
-            table_name="meas_table",
+            table_name=target_table,
             schema="re_insight",
             if_row_exists="update",
         )
@@ -549,6 +565,10 @@ def get_dsm_regulation(actual, forecast, avc_kw, regulation, ppa_rate=5.0):
     penalty_sum = float(total_dsm_penalty_rs.sum())
     revenue_sum = float(gross_revenue.sum())
 
+    ts_impact_ps_kwh = np.where(
+        actual_kwh > 0, (total_dsm_penalty_rs / actual_kwh) * 100, 0.0
+    )
+
     return {
         "Actual_Generation_kWh": actual_sum,
         "Target_Generation_kWh": float(forecast_kwh.sum()),
@@ -562,6 +582,9 @@ def get_dsm_regulation(actual, forecast, avc_kw, regulation, ppa_rate=5.0):
         "Total_loss_percentage": (
             (penalty_sum / revenue_sum) * 100 if revenue_sum > 0 else 0.0
         ),
+        "ts_over_injection_rs": dsm_over_rs,  # <--- Added time-series array
+        "ts_under_injection_rs": dsm_under_rs,  # <--- Added time-series array
+        "ts_dsm_impact_ps_kwh": ts_impact_ps_kwh,  # <--- Added time-series array
     }
 
 
