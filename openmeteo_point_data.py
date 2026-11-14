@@ -220,7 +220,7 @@ if __name__ == "__main__":
                     }
                 )
                 continue
-
+            print(f"Fetched data for {model} for {prediction_time_str} at {dt.now()}")
             all_locations = []
             # Loop through each item in the JSON list
             for i, item in enumerate(forecast_data):
