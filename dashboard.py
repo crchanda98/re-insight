@@ -12,6 +12,7 @@ import numpy as np
 import timeseries_app
 import scatter_app
 import clearsky_app
+import data_monitor
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -260,6 +261,23 @@ def measurement_page():
                 "PPA Rate", min_value=0.0, value=5.0, step=0.1
             )
 
+        # Row 4
+        r4_col1, r4_col2, r4_col3 = st.columns(3)
+        with r4_col1:
+            interpolate_fct = st.selectbox(
+                "Interpolate Forecast",
+                options=["Yes", "No"],
+                index=0,
+                help="Select \"No\" to keep forecast data at its original timestamps without resampling/interpolation."
+            )
+        with r4_col2:
+            filter_time_col = st.selectbox(
+                "Filter Timestamp Column",
+                options=["prediction_time", "created_at"],
+                index=0,
+                help="Select which timestamp column to use for regulation-based forecast filtering, sorting, and deduplication."
+            )
+
         avc_static = 100.0
         if selected_plant and not df_static.empty:
             plant_static = df_static[df_static["plant_name"] == selected_plant]
@@ -355,12 +373,23 @@ def measurement_page():
                             .dt.tz_convert("Asia/Kolkata")
                             .dt.tz_localize(None)
                         )
-                        if "prediction_time" in df_fct.columns:
-                            df_fct["prediction_time"] = (
-                                pd.to_datetime(df_fct["prediction_time"], utc=True)
+                        if filter_time_col in df_fct.columns:
+                            df_fct[filter_time_col] = (
+                                pd.to_datetime(df_fct[filter_time_col], utc=True)
                                 .dt.tz_convert("Asia/Kolkata")
                                 .dt.tz_localize(None)
                             )
+                            if filter_time_col == "created_at":
+                                df_fct[filter_time_col] = df_fct[filter_time_col].apply(
+                                    lambda ts: ts.ceil("15min") if pd.notna(ts) else ts
+                                )
+                            if filter_time_col != "prediction_time":
+                                # Drop existing prediction_time column to avoid duplicate label
+                                if "prediction_time" in df_fct.columns:
+                                    df_fct = df_fct.drop(columns=["prediction_time"])
+                                df_fct = df_fct.rename(
+                                    columns={filter_time_col: "prediction_time"}
+                                )
                             df_fct = utils.filter_forecast_by_regulation(
                                 df_fct, regulation=regulation
                             )
@@ -372,7 +401,8 @@ def measurement_page():
                             )
                         df_fct = df_fct.set_index("forecast_time")
                         df_fct = df_fct[["active_power"]]
-                        df_fct = df_fct.resample("15min").interpolate("linear")
+                        if interpolate_fct == "Yes":
+                            df_fct = df_fct.resample("15min").interpolate("linear")
                         df_fct = df_fct.sort_index()
                         if "active_power" in df_fct.columns:
                             df_fct = df_fct.rename(
@@ -703,6 +733,7 @@ pages = {
     "DSM Dashboard": measurement_page,
     "Log Dashboard": logging_page,
     "Data Cleaning Dashboard": data_cleaning_page,
+    "Data Monitor": lambda: data_monitor.data_monitor_page(db_con),
 }
 
 # --- 2. Sidebar Navigation (Top of Sidebar) ---
