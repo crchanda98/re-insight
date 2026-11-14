@@ -69,7 +69,7 @@ for _, idf in df_static.iterrows():
         db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Meas data for {farm_name} with latest record time {latest_ftp_time}"})
 
         ### Fetching nwp model training data
-        nwp_data = db_con.get_weather_data(plant=farm_name, model="ncm_d2", \
+        nwp_data = db_con.get_weather_data(plant=farm_name, model="ncum_g", \
             start_date=train_start_time.strftime("%Y-%m-%dT%H:%M:%S"), \
             end_date=train_end_time.strftime("%Y-%m-%dT%H:%M:%S"))
         df_nwp = nwp_data[nwp_data["height"] == 80]

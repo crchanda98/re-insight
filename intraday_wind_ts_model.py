@@ -86,7 +86,6 @@ for _, idf in df_static.iterrows():
         df_nwp_ecm = df_nwp_ecm.set_index("forecast_time")
         df_nwp_ecm = df_nwp_ecm.resample("15min").interpolate(method="time")
         df_nwp_ecm = df_nwp_ecm.reset_index()
-        print(latest_pred_time)
 
         db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Latest prediction time for ECMWF: {latest_pred_time}"})
 
@@ -97,7 +96,7 @@ for _, idf in df_static.iterrows():
         df_nwp_ecm = df_nwp_ecm.reset_index(drop=True)
 
         ### Fetching nwp model forecast data
-        nwp_data = db_con.get_weather_data(plant=farm_name, model="ncm_d2", \
+        nwp_data = db_con.get_weather_data(plant=farm_name, model="ncum_g", \
             start_date=train_start_time.strftime("%Y-%m-%dT%H:%M:%S"), \
             end_date=fct_end_time.strftime("%Y-%m-%dT%H:%M:%S"))
         df_nwp_ncm = nwp_data[nwp_data["height"] == 80]
@@ -111,7 +110,6 @@ for _, idf in df_static.iterrows():
         df_nwp_ncm = df_nwp_ncm.set_index("forecast_time")
         df_nwp_ncm = df_nwp_ncm.resample("15min").interpolate(method="time")
         df_nwp_ncm = df_nwp_ncm.reset_index()
-        print(latest_pred_time)
 
         db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Latest prediction time for NCMRWF: {latest_pred_time}"})
 

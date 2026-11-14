@@ -99,7 +99,7 @@ for _, idf in df_static.iterrows():
 
 
         ### Fetching nwp model forecast data
-        df_nwp_fct = db_con.get_weather_data(plant=farm_name, model="ncm_d2", \
+        df_nwp_fct = db_con.get_weather_data(plant=farm_name, model="ncum_g", \
             start_date=fct_start_time_history.strftime("%Y-%m-%dT%H:%M:%S"), \
             end_date=fct_end_time.strftime("%Y-%m-%dT%H:%M:%S"))
 

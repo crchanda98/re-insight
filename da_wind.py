@@ -77,7 +77,7 @@ for _, idf in df_static.iterrows():
     try:
         print(f"Running DA for {idf['plant_name']}")
         db_con.logging({"script": SCRIPT_NAME, "log_type": "info", "message": f"Running DA for {idf['plant_name']}"})
-        nwp_data = db_con.get_weather_data(plant=idf["plant_name"], model="ncm_d2", \
+        nwp_data = db_con.get_weather_data(plant=idf["plant_name"], model="ncum_g", \
             start_date=fct_start_time_utc.strftime("%Y-%m-%dT%H:%M:%S"), \
             end_date=fct_end_time_utc.strftime("%Y-%m-%dT%H:%M:%S"))
         df_nwp = nwp_data[nwp_data["height"] == 80]
