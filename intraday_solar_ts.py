@@ -6,7 +6,6 @@ import traceback
 import numpy as np
 import utils
 from datetime import datetime as dt, timedelta
-from sklearn.ensemble import RandomForestRegressor
 from urllib.parse import quote as urlquote
 from sqlalchemy import create_engine
 from ftplib import FTP
@@ -239,6 +238,9 @@ for _, idf in df_static.iterrows():
         df_fct["active_power"][df_fct["active_power_cs"] == 0] = 0
         df_fct["active_power"][df_fct["active_power"] < 0] = 0
         df_fct.loc[df_fct["active_power_cs"] <= 0, "active_power"] = 0
+        df_fct.loc[
+                    df_fct["active_power"] >= df_fct["active_power_cs"], "active_power"
+                ] = df_fct["active_power_cs"]
         df_fct = df_fct.reset_index()
         df_fct = df_fct.dropna(subset=["active_power"])
         df_fct["plant_name"] = plant_name
