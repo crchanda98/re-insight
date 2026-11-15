@@ -156,8 +156,7 @@ for idate in dates_str:
                     print(
                         f"Files downloaded and extracted successfully to {fileDownloadPath}"
                     )
-                    if GCS_FLAG:
-                        gcs_utils.upload(nc_path, gcs_path)
+
 
                     df_out = utils.process_ncm_sat(
                         fname=nc_path,
@@ -179,6 +178,8 @@ for idate in dates_str:
                             "message": f"Data extracted for ncm_sat, {idate_str} and pushed to database",
                         }
                     )
+                    if GCS_FLAG:
+                        gcs_utils.upload(nc_path, gcs_path)
                     df_manifest.loc[idate_str, "ncm_sat"] = 1
                     os.remove(nc_path)
                 else:
