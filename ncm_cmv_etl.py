@@ -80,7 +80,7 @@ time_now = time_now - timedelta(
 date_end = time_now
 date_start = date_end - timedelta(hours=lag_hours)
 dates_str = pd.date_range(end=date_start, start=date_end, freq="-15min")
-dates_str = dates_str.between_time('06:15', '07:15')
+dates_str = dates_str.between_time('01:15', '14:15')
 dates_str = dates_str[::-1]
 
 MODEL_MANIFEST = os.path.join(root_path, "ncm_sat.csv")
